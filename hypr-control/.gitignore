@@ -1,0 +1,6 @@
+# 构建产物
+hctrl.exe
+*.exe
+
+# 运行数据
+*.json.tmp

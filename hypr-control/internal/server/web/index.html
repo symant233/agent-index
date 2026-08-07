@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#12151c">
+  <title>hypr-control 遥控器</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- 配对视图：未授权设备首次访问 -->
+  <section id="view-pair" class="view hidden">
+    <div class="card pair-card">
+      <h1 class="logo">hypr<span>-control</span></h1>
+      <p class="hint">本设备尚未被主机授权。请在本机（主机）上执行：</p>
+      <code class="cmd">hctrl devices allow <span id="pair-pin">------</span></code>
+      <p class="sub-hint">PIN 每台设备唯一，显示在下方设备信息中。</p>
+      <div class="device-info">
+        <div>设备 ID：<span id="pair-device-id"></span></div>
+        <div>访问来源：<span id="pair-ip"></span></div>
+        <div>浏览器：<span id="pair-ua"></span></div>
+      </div>
+      <p class="pending-msg hidden" id="pair-pending-msg">⏳ 等待授权中…（授权后本页自动进入遥控器）</p>
+    </div>
+  </section>
+
+  <!-- 拒绝视图 -->
+  <section id="view-denied" class="view hidden">
+    <div class="card">
+      <h1>⛔ 访问被拒绝</h1>
+      <p class="hint">本设备已被主机拒绝。如需重新访问，请在主机上执行
+        <code class="cmd">hctrl devices list</code> 查看状态，或在网页重新打开配对。</p>
+    </div>
+  </section>
+
+  <!-- 遥控器主视图：已授权 -->
+  <section id="view-remote" class="view hidden">
+    <header class="topbar">
+      <span class="logo small">hypr-control</span>
+      <button id="btn-repair" class="ghost" title="重新配对">重新配对</button>
+    </header>
+
+    <!-- 鼠标触控板 -->
+    <div class="mousepad-wrap">
+      <div id="mousepad" class="mousepad">
+        <div class="mousepad-label">触控板：拖动移动 · 点按左键</div>
+      </div>
+      <div class="mousepad-actions">
+        <button id="btn-mbtn" class="ctl" title="中键">中键</button>
+        <button id="btn-rbtn" class="ctl" title="右键">右键</button>
+      </div>
+    </div>
+
+    <!-- 方向键区 -->
+    <div class="dpad">
+      <button class="dpad-key" data-key="up" aria-label="上">▲</button>
+      <button class="dpad-key" data-key="left" aria-label="左">◀</button>
+      <button class="dpad-key ok" data-key="enter" aria-label="确定">OK</button>
+      <button class="dpad-key" data-key="right" aria-label="右">▶</button>
+      <button class="dpad-key" data-key="down" aria-label="下">▼</button>
+    </div>
+    <div class="row nav-row">
+      <button class="ctl" data-key="backspace" title="返回">返回</button>
+      <button class="ctl" data-key="home" title="主页">主页</button>
+      <button class="ctl" data-key="esc" title="退出">退出</button>
+    </div>
+
+    <!-- 音量与媒体 -->
+    <div class="row">
+      <span class="label">音量</span>
+      <button class="ctl vol" data-vol="down">－</button>
+      <button class="ctl vol" data-vol="mute">静音</button>
+      <button class="ctl vol" data-vol="up">＋</button>
+    </div>
+    <div class="row">
+      <span class="label">媒体</span>
+      <button class="ctl" data-media="prev">⏮</button>
+      <button class="ctl" data-media="playpause">⏯</button>
+      <button class="ctl" data-media="next">⏭</button>
+      <button class="ctl" data-media="stop">⏹</button>
+    </div>
+
+    <!-- 常用快捷键 -->
+    <div class="row shortcuts">
+      <button class="ctl" data-chord='["win","d"]'>Win+D</button>
+      <button class="ctl" data-chord='["ctrl","shift","esc"]'>任务管理器</button>
+      <button class="ctl" data-chord='["win","l"]'>Win+L</button>
+      <button class="ctl" data-key="f5">刷新</button>
+    </div>
+
+    <div class="row danger">
+      <button id="btn-lock" class="ctl danger-btn">🔒 锁屏</button>
+    </div>
+
+    <footer class="statusbar"><span id="status-text"></span></footer>
+  </section>
+
+  <script src="js/api.js"></script>
+  <script src="js/pair.js"></script>
+  <script src="js/mousepad.js"></script>
+  <script src="js/remote.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

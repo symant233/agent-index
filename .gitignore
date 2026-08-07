@@ -1,0 +1,5 @@
+# Reasonix 会话数据
+.reasonix/
+
+# 构建产物与运行数据（hypr-control 内另有细化规则）
+*.exe

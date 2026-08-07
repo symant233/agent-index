@@ -1,0 +1,148 @@
+:root {
+  --bg: #12151c;
+  --card: #1b202b;
+  --accent: #4f8cff;
+  --accent-dark: #3a6fd6;
+  --text: #e8ecf4;
+  --muted: #8b93a7;
+  --danger: #ff5d5d;
+  --ok: #3ddc84;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  user-select: none;
+}
+
+.view { max-width: 480px; margin: 0 auto; padding: 16px; min-height: 100vh; }
+.hidden { display: none !important; }
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 24px;
+  margin-top: 12vh;
+  text-align: center;
+}
+.logo { font-size: 26px; margin: 0 0 16px; letter-spacing: 1px; }
+.logo span { color: var(--accent); }
+.logo.small { font-size: 16px; margin: 0; }
+.hint { color: var(--muted); font-size: 14px; line-height: 1.6; }
+.sub-hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.cmd {
+  display: inline-block;
+  background: #0d1016;
+  border: 1px solid #2a3142;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: Consolas, monospace;
+  font-size: 15px;
+  color: var(--ok);
+  word-break: break-all;
+}
+.device-info {
+  margin-top: 18px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.9;
+  word-break: break-all;
+}
+.pending-msg { color: var(--accent); font-size: 13px; margin-top: 14px; }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.ghost {
+  background: transparent;
+  border: 1px solid #2a3142;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ---------- 触控板 ---------- */
+.mousepad-wrap { margin-bottom: 14px; }
+.mousepad {
+  height: 150px;
+  background: var(--card);
+  border: 1px solid #2a3142;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: crosshair;
+}
+.mousepad-label { color: var(--muted); font-size: 12px; pointer-events: none; }
+.mousepad-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* ---------- 按钮 ---------- */
+button.ctl {
+  background: var(--card);
+  border: 1px solid #2a3142;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 15px;
+  cursor: pointer;
+  min-width: 56px;
+}
+button.ctl:active, .dpad-key:active { background: var(--accent-dark); border-color: var(--accent); }
+button.ctl.danger-btn { background: #2a1620; border-color: #5a2a34; color: var(--danger); }
+button.ctl.danger-btn:active { background: #4a2430; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.row .label { color: var(--muted); font-size: 12px; width: 34px; }
+.row.shortcuts button.ctl { font-size: 12px; padding: 10px 8px; flex: 1; }
+.row.danger button.ctl { flex: 1; }
+
+/* ---------- 方向键 ---------- */
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 8px;
+  width: 210px;
+  margin: 0 auto 10px;
+}
+.dpad-key {
+  background: var(--card);
+  border: 1px solid #2a3142;
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 20px;
+  height: 64px;
+  cursor: pointer;
+}
+.dpad-key.ok { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 15px; }
+.dpad-key.ok:active { background: var(--accent-dark); }
+.dpad-key[data-key="up"] { grid-column: 2; grid-row: 1; }
+.dpad-key[data-key="left"] { grid-column: 1; grid-row: 2; }
+.dpad-key.ok { grid-column: 2; grid-row: 2; }
+.dpad-key[data-key="right"] { grid-column: 3; grid-row: 2; }
+.dpad-key[data-key="down"] { grid-column: 2; grid-row: 3; }
+
+.nav-row { justify-content: center; }
+
+/* ---------- 状态栏 ---------- */
+.statusbar { text-align: center; color: var(--muted); font-size: 12px; margin-top: 10px; }
