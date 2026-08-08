@@ -1,14 +1,15 @@
 'use strict';
 // 触控板：根据手指滑动速度缩放鼠标位移（滑得快 → 移得多，滑得慢 → 移得少），
-// 拖动发送相对移动（节流），点按=左键，滚轮滚动，右键/中键按钮。
+// 节流窗口内累积位移后一次发送（不丢帧、更跟手），点按=左键，滚轮滚动，右键/中键按钮。
 const Mousepad = (() => {
-  const THROTTLE_MS = 25;   // 发送节流
-  const BASE_SPEED = 1.2;   // 基准速度 px/ms，视为 1 倍
-  const MIN_FACTOR = 0.3;   // 最慢时的位移缩放
-  const MAX_FACTOR = 3.0;   // 最快时的位移缩放
+  const THROTTLE_MS = 12;   // 发送节流（更短 → 更跟手、少卡顿）
+  const BASE_SPEED = 0.5;   // 基准速度 px/ms：0.5px/ms 即 1 倍（整体更灵敏）
+  const MIN_FACTOR = 0.5;   // 最慢时的位移缩放
+  const MAX_FACTOR = 4.0;   // 最快时的位移缩放
 
   let x0 = null, y0 = null, moved = false, lastSent = 0;
   let lastMoveT = 0, smoothSpeed = 0;
+  let accX = 0, accY = 0;   // 节流窗口内累积位移
 
   function init() {
     const pad = document.getElementById('mousepad');
@@ -21,6 +22,7 @@ const Mousepad = (() => {
       moved = false;
       lastMoveT = 0;
       smoothSpeed = 0;
+      accX = accY = 0;
     });
 
     pad.addEventListener('pointermove', (e) => {
@@ -42,18 +44,23 @@ const Mousepad = (() => {
       }
       lastMoveT = now;
 
+      // 累积位移（缩放后），节流到期一次发送，避免丢帧导致卡顿
+      accX += dx * factor;
+      accY += dy * factor;
       const t = Date.now();
       if (t - lastSent < THROTTLE_MS) return;
       lastSent = t;
-      send({
-        action: 'move',
-        dx: Math.round(dx * factor),
-        dy: Math.round(dy * factor),
-      });
+      send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
+      accX = accY = 0;
     });
 
     pad.addEventListener('pointerup', () => {
       x0 = null;
+      // 发送残留累积位移（若尚未发送）
+      if (accX !== 0 || accY !== 0) {
+        send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
+        accX = accY = 0;
+      }
       if (!moved) send({ action: 'click', button: 'left' });
     });
 

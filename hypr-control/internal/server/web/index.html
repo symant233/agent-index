@@ -37,7 +37,10 @@
   <section id="view-remote" class="view hidden">
     <header class="topbar">
       <span class="logo small">hypr-control</span>
-      <button id="btn-repair" class="ghost" title="重新配对">重新配对</button>
+      <div class="topbar-actions">
+        <button id="btn-more" class="ghost" title="更多（锁屏/关机/重启）">☰ 更多</button>
+        <button id="btn-repair" class="ghost" title="重新配对">重新配对</button>
+      </div>
     </header>
 
     <!-- 鼠标触控板 -->
@@ -86,10 +89,6 @@
       <button class="ctl" data-chord='["ctrl","shift","esc"]'>任务管理器</button>
       <button class="ctl" data-chord='["win","l"]'>Win+L</button>
       <button class="ctl" data-key="f5">刷新</button>
-    </div>
-
-    <div class="row">
-      <button id="btn-more" class="ctl more-btn">☰ 更多</button>
     </div>
 
     <footer class="statusbar"><span id="status-text"></span></footer>

@@ -30,11 +30,11 @@ html, body {
   height: 100vh;
   max-width: 480px;
   margin: 0 auto;
-  padding: 10px 16px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  gap: 6px;
+  gap: 4px;
 }
 .hidden { display: none !important; }
 
@@ -91,21 +91,22 @@ html, body {
   border: 1px solid #2a3142;
   color: var(--muted);
   border-radius: 8px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
   cursor: pointer;
 }
+.topbar-actions { display: flex; gap: 6px; }
 
 /* ---------- 触控板（弹性占满剩余空间） ---------- */
 .mousepad-wrap {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 84px;
+  min-height: 64px;
 }
 .mousepad {
   flex: 1;
-  min-height: 70px;
+  min-height: 52px;
   background: var(--card);
   border: 1px solid #2a3142;
   border-radius: 12px;
@@ -116,7 +117,7 @@ html, body {
   cursor: crosshair;
 }
 .mousepad-label { color: var(--muted); font-size: 12px; pointer-events: none; }
-.mousepad-actions { display: flex; gap: 8px; margin-top: 6px; flex-shrink: 0; }
+.mousepad-actions { display: flex; gap: 8px; margin-top: 4px; flex-shrink: 0; }
 
 /* ---------- 按钮 ---------- */
 button.ctl {
@@ -124,10 +125,10 @@ button.ctl {
   border: 1px solid #2a3142;
   color: var(--text);
   border-radius: 10px;
-  padding: 9px 14px;
-  font-size: 14px;
+  padding: 7px 10px;
+  font-size: 13px;
   cursor: pointer;
-  min-width: 48px;
+  min-width: 44px;
 }
 button.ctl:active, .dpad-key:active { background: var(--accent-dark); border-color: var(--accent); }
 button.ctl.danger-btn { background: #2a1620; border-color: #5a2a34; color: var(--danger); }
@@ -136,30 +137,29 @@ button.ctl.danger-btn:active { background: #4a2430; }
 .row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
-.row .label { color: var(--muted); font-size: 12px; width: 34px; }
-.row.shortcuts button.ctl { font-size: 12px; padding: 8px 6px; flex: 1; }
-.more-btn { flex: 1; }
+.row .label { color: var(--muted); font-size: 12px; width: 32px; }
+.row.shortcuts button.ctl { font-size: 12px; padding: 6px 4px; flex: 1; }
 
 /* ---------- 方向键 ---------- */
 .dpad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(3, 1fr);
-  gap: 6px;
-  width: 186px;
+  gap: 4px;
+  width: 156px;
   margin: 0 auto;
   flex-shrink: 0;
 }
 .dpad-key {
   background: var(--card);
   border: 1px solid #2a3142;
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--text);
-  font-size: 18px;
-  height: 52px;
+  font-size: 15px;
+  height: 42px;
   cursor: pointer;
 }
 .dpad-key.ok { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 14px; }
@@ -201,6 +201,6 @@ button.ctl.danger-btn:active { background: #4a2430; }
 .statusbar {
   text-align: center;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   flex-shrink: 0;
 }
