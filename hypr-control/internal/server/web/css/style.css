@@ -38,6 +38,12 @@ html, body {
 }
 .hidden { display: none !important; }
 
+/* 配对/拒绝视图：内容垂直水平居中 */
+#view-pair, #view-denied {
+  justify-content: center;
+  align-items: center;
+}
+
 /* ---------- 配对卡片（居中） ---------- */
 .card {
   background: var(--card);

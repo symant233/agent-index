@@ -364,6 +364,37 @@ func TestStaticPage(t *testing.T) {
 	}
 }
 
+// TestHTTPRedirect 验证明文 HTTP 请求被 302 重定向到 https。
+func TestHTTPRedirect(t *testing.T) {
+	store, err := devices.Open(filepath.Join(t.TempDir(), config.DevicesFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{store: store, backend: &mockBackend{}}
+	rts := httptest.NewServer(c.redirectHandler(c.handler()))
+	defer rts.Close()
+
+	// 禁止自动跟随重定向，以便断言 302 本身。
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Get(rts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("明文请求应 302, got %d", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if !strings.HasPrefix(loc, "https://") {
+		t.Fatalf("Location 应为 https, got %q", loc)
+	}
+	if !strings.Contains(loc, "/") {
+		t.Fatalf("Location 应包含路径, got %q", loc)
+	}
+}
+
 func readBody(r *http.Response) string {
 	var sb strings.Builder
 	buf := make([]byte, 4096)

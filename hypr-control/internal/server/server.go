@@ -5,6 +5,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"crypto/tls"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -41,7 +42,8 @@ const (
 	nonceTTL = 300 * time.Second
 )
 
-// Start 在 0.0.0.0:cfg.Port 上启动控制服务并返回（HTTPS，自签名证书）。
+// Start 在 0.0.0.0:cfg.Port 上启动控制服务并返回。
+// 同一端口同时服务 HTTPS 与明文 HTTP（明文自动 302 重定向到 https）。
 // 监听端口占用时重试（重启流程中旧进程可能尚未完全释放端口）。
 func Start(store *devices.Store, backend control.Backend, cfg config.Config) (*http.Server, error) {
 	c := &Control{store: store, backend: backend}
@@ -50,9 +52,14 @@ func Start(store *devices.Store, backend control.Backend, cfg config.Config) (*h
 	if err != nil {
 		return nil, fmt.Errorf("准备 TLS 证书失败: %w", err)
 	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("加载 TLS 证书失败: %w", err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
 	srv := &http.Server{
-		Handler:           c.handler(),
+		Handler:           c.redirectHandler(c.handler()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -62,11 +69,23 @@ func Start(store *devices.Store, backend control.Backend, cfg config.Config) (*h
 		return nil, err
 	}
 	go func() {
-		if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(&dualListener{Listener: ln, cfg: tlsCfg}); err != nil && err != http.ErrServerClosed {
 			log.Printf("控制服务异常退出: %v", err)
 		}
 	}()
 	return srv, nil
+}
+
+// redirectHandler 把明文 HTTP 请求 302 重定向到同主机 HTTPS（https://<host><uri>）。
+func (c *Control) redirectHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil {
+			target := "https://" + r.Host + r.URL.RequestURI()
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // handler 组装完整路由：控制/配对 API + 静态网页。

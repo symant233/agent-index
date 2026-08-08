@@ -92,6 +92,10 @@ func Open(path string) (*Store, error) {
 //   - 已授权：原样返回（含 token），供直接控制
 //   - 待授权：返回原 PIN，不重复生成
 //   - 已拒绝或新设备：进入 pending 并生成新 PIN
+//
+// 新 ID 会先按 (IP, UA) 精确匹配已授权设备：浏览器 localStorage 丢失
+// （如 http→https 切换导致协议级隔离、清缓存）时，同一来源设备可自动
+// 找回原授权（返回原 device_id 与 token），前端据此恢复持久化 ID。
 func (s *Store) Register(id, name, ip, ua string) (Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,6 +113,13 @@ func (s *Store) Register(id, name, ip, ua string) (Device, error) {
 		}
 		s.saveLocked()
 		return *d, nil
+	}
+
+	// 新 ID：按 (IP, UA) 找回已授权设备，复用其授权与 token。
+	for _, d := range s.byID {
+		if d.Status == StatusAuthorized && d.IP == ip && d.UA == ua {
+			return *d, nil
+		}
 	}
 
 	d := &Device{

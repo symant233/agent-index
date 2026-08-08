@@ -42,6 +42,11 @@ const Api = (() => {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.error || ('配对请求失败 ' + resp.status));
+    // 始终采用服务端登记的真实设备 ID（新设备生成后、找回授权时都会返回），
+    // 保证 localStorage 与设备表一致，避免重复授权。
+    if (data.device && data.device.id) {
+      localStorage.setItem(ID_KEY, data.device.id);
+    }
     return data;
   }
 

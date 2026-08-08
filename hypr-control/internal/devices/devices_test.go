@@ -138,3 +138,50 @@ func TestCount(t *testing.T) {
 		t.Fatalf("Count = (pending=%d, authorized=%d), want (1, 1)", p, a)
 	}
 }
+
+// TestFindAuthorizedBySource 验证新 ID 可按 (IP, UA) 找回已授权设备
+// （浏览器 localStorage 丢失后免重新授权）。
+func TestFindAuthorizedBySource(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), config.DevicesFileName))
+
+	// 登记并授权一台设备
+	d1, err := s.Register("orig-id", "手机", "192.168.1.9", "UA-ANDROID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := s.AuthorizeByPIN(d1.PIN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 新 device_id（localStorage 丢失场景）+ 相同 IP/UA → 找回原授权
+	found, err := s.Register("new-uuid-123", "手机", "192.168.1.9", "UA-ANDROID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found.Authorized() {
+		t.Fatalf("找回设备应保持 authorized, got %+v", found)
+	}
+	if found.ID != "orig-id" || found.Token != auth.Token {
+		t.Fatalf("找回应返回原设备 ID 与 token: id=%q token相同=%v", found.ID, found.Token == auth.Token)
+	}
+
+	// 不同 IP 不应找回 → 生成 pending 新设备
+	d2, err := s.Register("new-uuid-456", "手机", "192.168.1.99", "UA-ANDROID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2.Status != StatusPending || d2.ID == "orig-id" {
+		t.Fatalf("不同 IP 不应找回: %+v", d2)
+	}
+
+	// pending 设备不参与找回
+	if _, err := s.Register("new-uuid-789", "手机", "192.168.1.9", "UA-ANDROID"); err != nil {
+		t.Fatal(err)
+	}
+	// 前一条已返回 pending（d2 场景不同 IP），这里同一 IP 应仍找回 orig-id
+	d4, _ := s.Register("new-uuid-789", "手机", "192.168.1.9", "UA-ANDROID")
+	if d4.ID != "orig-id" {
+		t.Fatalf("同 IP+UA 应始终找回原授权, got %q", d4.ID)
+	}
+}
