@@ -20,6 +20,7 @@ const usage = `hctrl —— 局域网主机遥控器（服务端 + 管理 CLI）
   hctrl devices allow <PIN>                   允许一个待授权设备（输入网页显示的 6 位 PIN）
   hctrl devices deny <ID|PIN>                 拒绝一个待授权设备
   hctrl devices revoke <ID>                   吊销一个已授权设备
+  hctrl autostart enable|disable|status       注册/移除/查看开机自启动
   hctrl -h | --help                           显示本帮助
 
 示例:
@@ -50,6 +51,8 @@ func main() {
 		err = cmdKill(args[1:])
 	case "devices":
 		err = cmdDevices(args[1:])
+	case "autostart":
+		err = cmdAutostart(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "未知子命令: %q\n\n%s", args[0], usage)
 		os.Exit(2)

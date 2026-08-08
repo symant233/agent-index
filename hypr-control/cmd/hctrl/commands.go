@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"hypr-control/internal/admin"
+	"hypr-control/internal/autostart"
 	"hypr-control/internal/config"
 )
 
@@ -117,6 +118,58 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Printf("状态: %s\n监听: %s\n管理通道: %s\n运行时长: %s\n",
 		st.State, st.ListenAddr, st.AdminAddr, st.Uptime.Round(time.Second))
+	if enabled, cmd, err := autostart.Status(); err == nil {
+		if enabled {
+			fmt.Printf("开机自启动: 已注册（%s）\n", cmd)
+		} else {
+			fmt.Println("开机自启动: 未注册")
+		}
+	}
+	return nil
+}
+
+// cmdAutostart 管理开机自启动注册。
+func cmdAutostart(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "用法: hctrl autostart enable|disable|status")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "enable":
+		cfg, _, err := config.ParseFlagsWithArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		if err := cfg.EnsureDataDir(); err != nil {
+			return err
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		if err := autostart.Enable(exe, cfg.DataDir); err != nil {
+			return err
+		}
+		fmt.Printf("已注册开机自启动: \"%s\" serve --daemon --data-dir \"%s\"\n", exe, cfg.DataDir)
+	case "disable":
+		if err := autostart.Disable(); err != nil {
+			return err
+		}
+		fmt.Println("已移除开机自启动")
+	case "status":
+		enabled, cmd, err := autostart.Status()
+		if err != nil {
+			return err
+		}
+		if enabled {
+			fmt.Printf("开机自启动: 已注册\n命令: %s\n", cmd)
+		} else {
+			fmt.Println("开机自启动: 未注册")
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "未知自启动子命令: %q\n", args[0])
+		os.Exit(2)
+	}
 	return nil
 }
 

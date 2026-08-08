@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"hypr-control/internal/config"
 	"hypr-control/internal/devices"
@@ -55,6 +58,8 @@ func (m *mockBackend) MouseMoveTo(x, y int) error { m.record("move_to"); return 
 func (m *mockBackend) MouseClick(button string) error { m.record("click:" + button); return nil }
 func (m *mockBackend) MouseScroll(delta int32) error { m.record("scroll"); return nil }
 func (m *mockBackend) Lock() error { m.record("lock"); return nil }
+func (m *mockBackend) PowerShutdown() error { m.record("power:shutdown"); return nil }
+func (m *mockBackend) PowerRestart() error  { m.record("power:restart"); return nil }
 func (m *mockBackend) VolumeUp() error   { m.record("volume:up"); return nil }
 func (m *mockBackend) VolumeDown() error { m.record("volume:down"); return nil }
 func (m *mockBackend) VolumeMute() error { m.record("volume:mute"); return nil }
@@ -89,6 +94,12 @@ func authorizeDevice(t *testing.T, store *devices.Store, pin string) string {
 
 func doJSON(t *testing.T, method, url, token, body string) *http.Response {
 	t.Helper()
+	return doJSONHeaders(t, method, url, token, body, replayHeaders())
+}
+
+// doJSONHeaders 与 doJSON 相同，但允许覆盖/追加请求头（用于防重放测试）。
+func doJSONHeaders(t *testing.T, method, url, token, body string, extra map[string]string) *http.Response {
+	t.Helper()
 	req, err := http.NewRequest(method, url, bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatal(err)
@@ -97,11 +108,22 @@ func doJSON(t *testing.T, method, url, token, body string) *http.Response {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+// replayHeaders 生成合法的时间戳+nonce 防重放头。
+func replayHeaders() map[string]string {
+	return map[string]string{
+		"X-Hypr-Timestamp": strconv.FormatInt(time.Now().Unix(), 10),
+		"X-Hypr-Nonce":     fmt.Sprintf("nonce-%d-%d", time.Now().UnixNano(), rand.Int63()),
+	}
 }
 
 func TestPairFlow(t *testing.T) {
@@ -196,6 +218,8 @@ func TestControlEndpoints(t *testing.T) {
 		{"/api/control/volume", `{"action":"mute"}`, "volume:mute"},
 		{"/api/control/media", `{"action":"next"}`, "media:next"},
 		{"/api/control/media", `{"action":"playpause"}`, "media:playpause"},
+		{"/api/control/power", `{"action":"shutdown"}`, "power:shutdown"},
+		{"/api/control/power", `{"action":"restart"}`, "power:restart"},
 	}
 	for _, tc := range cases {
 		mock.mu.Lock()
@@ -246,6 +270,51 @@ func TestControlEndpoints(t *testing.T) {
 		}
 		r.Body.Close()
 	}
+}
+
+// TestReplayProtection 验证防重放：缺少/过期时间戳、重复 nonce 均被拒绝。
+func TestReplayProtection(t *testing.T) {
+	ts, mock, store, _ := newTestServer(t)
+
+	resp := doJSON(t, http.MethodPost, ts.URL+"/api/pair", "", `{"device_id":"dev-rp","name":"x"}`)
+	var out struct {
+		Device struct{ PIN string `json:"pin"` } `json:"device"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	token := authorizeDevice(t, store, out.Device.PIN)
+	_ = mock
+
+	// 1. 缺少防重放头 → 400
+	r := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/key", token, `{"key":"enter"}`, map[string]string{})
+	if r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("缺少防重放头应 400, got %d", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// 2. 过期时间戳 → 401
+	old := map[string]string{
+		"X-Hypr-Timestamp": strconv.FormatInt(time.Now().Unix()-1000, 10),
+		"X-Hypr-Nonce":     "stale-nonce",
+	}
+	r = doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/key", token, `{"key":"enter"}`, old)
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("过期时间戳应 401, got %d", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// 3. 同一 nonce 复用 → 第二次拒绝
+	hdr := replayHeaders()
+	r1 := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/key", token, `{"key":"enter"}`, hdr)
+	if r1.StatusCode != http.StatusOK {
+		t.Fatalf("首次合法请求应 200, got %d", r1.StatusCode)
+	}
+	r1.Body.Close()
+	r2 := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/key", token, `{"key":"enter"}`, hdr)
+	if r2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("重复 nonce 应 401, got %d", r2.StatusCode)
+	}
+	r2.Body.Close()
 }
 
 func TestStaticPage(t *testing.T) {

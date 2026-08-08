@@ -40,10 +40,36 @@ const Remote = (() => {
         Api.control('/api/control/media', { action: btn.dataset.media }).catch(window.__hctrlError || console.error)));
     });
 
-    // 锁屏
+    // 锁屏（在“更多”面板内）
     document.getElementById('btn-lock').addEventListener('click', () => {
       if (confirm('确定要锁屏主机吗？')) {
         Api.control('/api/control/lock', {}).catch(window.__hctrlError || console.error);
+      }
+    });
+
+    // “更多”面板：锁屏 / 重启 / 关机
+    const panel = document.getElementById('more-panel');
+    document.getElementById('btn-more').addEventListener('click', () => {
+      panel.classList.remove('hidden');
+    });
+    document.getElementById('btn-more-close').addEventListener('click', () => {
+      panel.classList.add('hidden');
+    });
+    panel.addEventListener('click', (ev) => {
+      if (ev.target === panel) panel.classList.add('hidden'); // 点遮罩关闭
+    });
+
+    // 重启 / 关机（危险操作：确认 + 说明 10 秒内可取消）
+    document.getElementById('btn-restart').addEventListener('click', () => {
+      if (confirm('确定要重启主机吗？将在 10 秒后重启（主机上可执行 shutdown /a 取消）。')) {
+        Api.control('/api/control/power', { action: 'restart' })
+          .catch(window.__hctrlError || console.error);
+      }
+    });
+    document.getElementById('btn-shutdown').addEventListener('click', () => {
+      if (confirm('确定要关机吗？将在 10 秒后关机（主机上可执行 shutdown /a 取消）。')) {
+        Api.control('/api/control/power', { action: 'shutdown' })
+          .catch(window.__hctrlError || console.error);
       }
     });
 

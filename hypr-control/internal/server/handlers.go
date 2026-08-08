@@ -238,3 +238,28 @@ func (c *Control) handleLock(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "lock"})
 }
+
+// handlePower 电源操作：{"action":"shutdown|restart"}（延时 10 秒，可取消）。
+func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action string `json:"action"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	var err error
+	switch body.Action {
+	case "shutdown":
+		err = c.backend.PowerShutdown()
+	case "restart":
+		err = c.backend.PowerRestart()
+	default:
+		writeErr(w, http.StatusBadRequest, "未知电源动作: "+body.Action)
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": body.Action, "delay_seconds": "10"})
+}

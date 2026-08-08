@@ -88,12 +88,23 @@
       <button class="ctl" data-key="f5">刷新</button>
     </div>
 
-    <div class="row danger">
-      <button id="btn-lock" class="ctl danger-btn">🔒 锁屏</button>
+    <div class="row">
+      <button id="btn-more" class="ctl more-btn">☰ 更多</button>
     </div>
 
     <footer class="statusbar"><span id="status-text"></span></footer>
   </section>
+
+  <!-- 更多面板：不常用功能（锁屏/关机/重启） -->
+  <div id="more-panel" class="more-panel hidden">
+    <div class="more-card">
+      <h2>更多</h2>
+      <button id="btn-lock" class="ctl">🔒 锁屏</button>
+      <button id="btn-restart" class="ctl">🔄 重启主机</button>
+      <button id="btn-shutdown" class="ctl danger-btn">⏻ 关机</button>
+      <button id="btn-more-close" class="ctl">关闭</button>
+    </div>
+  </div>
 
   <script src="js/api.js"></script>
   <script src="js/pair.js"></script>

@@ -5,11 +5,13 @@ package server
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"hypr-control/internal/config"
@@ -24,12 +26,30 @@ var webFS embed.FS
 type Control struct {
 	store   *devices.Store
 	backend control.Backend
+
+	// 防重放：nonce → 过期时间（防止抓包重放控制命令）。
+	nonceMu sync.Mutex
+	nonces  map[string]time.Time
 }
 
-// Start 在 0.0.0.0:cfg.Port 上启动控制服务并返回。
+// 防重放参数。
+const (
+	// replayWindow 允许的请求时间戳与服务器时间差（秒）。
+	replayWindow = 120 * time.Second
+	// nonceTTL 记录 nonce 的最长保留时间（大于窗口即可）。
+	nonceTTL = 300 * time.Second
+)
+
+// Start 在 0.0.0.0:cfg.Port 上启动控制服务并返回（HTTPS，自签名证书）。
 // 监听端口占用时重试（重启流程中旧进程可能尚未完全释放端口）。
 func Start(store *devices.Store, backend control.Backend, cfg config.Config) (*http.Server, error) {
 	c := &Control{store: store, backend: backend}
+
+	certFile, keyFile, err := EnsureCert(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("准备 TLS 证书失败: %w", err)
+	}
+
 	srv := &http.Server{
 		Handler:           c.handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -41,7 +61,7 @@ func Start(store *devices.Store, backend control.Backend, cfg config.Config) (*h
 		return nil, err
 	}
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			log.Printf("控制服务异常退出: %v", err)
 		}
 	}()
@@ -69,6 +89,7 @@ func (c *Control) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/control/volume", c.auth(c.handleVolume))
 	mux.HandleFunc("POST /api/control/media", c.auth(c.handleMedia))
 	mux.HandleFunc("POST /api/control/lock", c.auth(c.handleLock))
+	mux.HandleFunc("POST /api/control/power", c.auth(c.handlePower))
 	return mux
 }
 
@@ -95,7 +116,8 @@ func listenWithRetry(addr string) (net.Listener, error) {
 	}
 }
 
-// auth 包装控制处理器：校验设备 token（Authorization: Bearer <token>）。
+// auth 包装控制处理器：校验设备 token（Authorization: Bearer <token>）
+// 与防重放头（X-Hypr-Timestamp 秒级时间戳 + X-Hypr-Nonce 一次性请求标识）。
 func (c *Control) auth(h func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
@@ -107,8 +129,53 @@ func (c *Control) auth(h func(http.ResponseWriter, *http.Request)) http.HandlerF
 			writeErr(w, http.StatusUnauthorized, "设备令牌无效或已吊销")
 			return
 		}
+		if !c.checkReplay(w, r) {
+			return
+		}
 		h(w, r)
 	}
+}
+
+// checkReplay 校验时间戳窗口与 nonce 唯一性，失败时写响应并返回 false。
+func (c *Control) checkReplay(w http.ResponseWriter, r *http.Request) bool {
+	tsStr := r.Header.Get("X-Hypr-Timestamp")
+	nonce := r.Header.Get("X-Hypr-Nonce")
+	if tsStr == "" || nonce == "" {
+		writeErr(w, http.StatusBadRequest, "缺少防重放头：X-Hypr-Timestamp / X-Hypr-Nonce")
+		return false
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "时间戳格式错误")
+		return false
+	}
+	diff := time.Now().Unix() - ts
+	if diff > int64(replayWindow.Seconds()) || diff < -int64(replayWindow.Seconds()) {
+		writeErr(w, http.StatusUnauthorized, "请求时间戳超出允许窗口，拒绝（防重放）")
+		return false
+	}
+	if len(nonce) < 16 {
+		writeErr(w, http.StatusBadRequest, "nonce 过短（至少 16 字符）")
+		return false
+	}
+
+	c.nonceMu.Lock()
+	defer c.nonceMu.Unlock()
+	if c.nonces == nil {
+		c.nonces = make(map[string]time.Time)
+	}
+	now := time.Now()
+	for k, exp := range c.nonces {
+		if now.After(exp) {
+			delete(c.nonces, k)
+		}
+	}
+	if _, dup := c.nonces[nonce]; dup {
+		writeErr(w, http.StatusUnauthorized, "请求标识（nonce）已使用，拒绝（防重放）")
+		return false
+	}
+	c.nonces[nonce] = now.Add(nonceTTL)
+	return true
 }
 
 // bearerToken 从请求头提取 Bearer 令牌。

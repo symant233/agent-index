@@ -4,7 +4,8 @@
 像电视遥控器一样，对运行它的 Windows 主机执行锁屏、模拟键盘按键（单个/组合）、
 鼠标移动与点击、系统音量、媒体播放控制等操作。
 
-- **网页控制（P0）**：局域网设备访问 `http://<主机IP>:8080` 打开遥控器网页，首次访问需在主机上经 CLI 授权。
+- **网页控制（P0）**：局域网设备访问 `https://<主机IP>:8080` 打开遥控器网页（HTTPS 加密，首次访问需在主机上经 CLI 授权）。
+- **传输安全**：控制通道使用 HTTPS（自签名证书）+ 时间戳/nonce 防重放。
 - **REST 控制（P2）**：暂不提供对第三方的公开 REST 通道；控制 API 仅供网页内部使用。
 - **仅支持 Windows**：通过 `user32.dll`（`SendInput` / `SetCursorPos` / `LockWorkStation` / `WM_APPCOMMAND`）实现，零外部依赖、无 CGo。
 
@@ -50,7 +51,8 @@ hctrl serve --data-dir D:\data   # 指定数据目录
 
 ### 2. 网页配对（首次访问）
 
-1. 在手机/其他设备浏览器打开 **`http://<主机IP>:8080`**（控制端口，默认 8080；本机可用 `http://localhost:8080`）。
+1. 在手机/其他设备浏览器打开 **`https://<主机IP>:8080`**（控制端口，默认 8080；本机可用 `https://localhost:8080`）。
+   > 首次访问会提示自签名证书不受信任，选择“高级 → 继续访问”即可（证书 10 年有效，只需一次）。
    > 注意：`hctrl status` 显示的"管理通道"（如 `127.0.0.1:16687`）是本机 CLI 专用端口，**不是网页**，其他设备无法访问。
 2. 页面显示本设备的 **6 位 PIN**。
 3. 在主机上执行授权：
@@ -87,6 +89,7 @@ hctrl kill                        # 优雅停止
 | `hctrl devices allow <PIN>` | 按 PIN 授权设备 |
 | `hctrl devices deny <ID\|PIN>` | 拒绝待授权设备 |
 | `hctrl devices revoke <ID>` | 吊销已授权设备 |
+| `hctrl autostart enable\|disable\|status` | 注册/移除/查看开机自启动（HKCU Run） |
 
 ## 控制 API（网页内部使用）
 
@@ -99,11 +102,18 @@ hctrl kill                        # 优雅停止
 | `POST /api/control/volume` | `{"action":"up\|down\|mute"}` | 系统音量 |
 | `POST /api/control/media` | `{"action":"playpause\|next\|prev\|stop"}` | 媒体控制 |
 | `POST /api/control/lock` | `{}` | 锁屏 |
+| `POST /api/control/power` | `{"action":"shutdown\|restart"}` | 延时 10 秒关机/重启（可 `shutdown /a` 取消） |
 
 控制请求需携带已授权设备的令牌：`Authorization: Bearer <token>`（token 在设备授权后由 `/api/pair` 返回）。
 
+所有控制请求还必须携带防重放头（HTTPS 之外的额外防护，防止抓包重放）：
+- `X-Hypr-Timestamp`：Unix 秒级时间戳，与服务器时间差超过 120 秒即拒绝
+- `X-Hypr-Nonce`：一次性随机标识（≥16 字符），重复使用即拒绝
+
 ## 安全说明
 
+- **传输加密**：控制通道为 HTTPS（自签名证书，首次生成后存于数据目录 `cert.pem`/`key.pem`，有效期 10 年）。
+- **防重放**：控制 API 校验 `X-Hypr-Timestamp`（120 秒窗口）+ `X-Hypr-Nonce`（一次性去重），抓包重放会被拒绝。
 - **首访拦截**：未授权设备只能访问配对页与 `/api/pair`，无法调用任何控制接口。
 - **管理通道隔离**：CLI 经 `127.0.0.1` 随机端口 + 随机 secret（`%LOCALAPPDATA%\hypr-control\admin.json`）通信，不暴露到局域网。
 - **`Ctrl+Alt+Del` 无法模拟**：它是 Windows 安全注意序列，`SendInput` 不允许注入。

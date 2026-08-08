@@ -35,11 +35,17 @@ const Api = (() => {
   }
 
   async function control(path, body) {
+    // 防重放：时间戳 + 一次性 nonce（服务端校验窗口并去重）
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const nonce = (crypto.randomUUID && crypto.randomUUID().replace(/-/g, '')) ||
+      (Math.random().toString(36).slice(2) + Date.now().toString(36));
     const resp = await fetch(path, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + token(),
+        'X-Hypr-Timestamp': ts,
+        'X-Hypr-Nonce': nonce,
       },
       body: JSON.stringify(body || {}),
     });
