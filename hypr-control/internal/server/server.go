@@ -4,6 +4,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -154,8 +155,8 @@ func (c *Control) checkReplay(w http.ResponseWriter, r *http.Request) bool {
 		writeErr(w, http.StatusUnauthorized, "请求时间戳超出允许窗口，拒绝（防重放）")
 		return false
 	}
-	if len(nonce) < 16 {
-		writeErr(w, http.StatusBadRequest, "nonce 过短（至少 16 字符）")
+	if len(nonce) < 16 || len(nonce) > 128 {
+		writeErr(w, http.StatusBadRequest, "nonce 长度必须为 16-128 字符")
 		return false
 	}
 
@@ -170,11 +171,13 @@ func (c *Control) checkReplay(w http.ResponseWriter, r *http.Request) bool {
 			delete(c.nonces, k)
 		}
 	}
-	if _, dup := c.nonces[nonce]; dup {
+	// 用定长哈希作 key：nonce 本身不落 map，避免超长/巨量 nonce 造成内存占用。
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(nonce)))
+	if _, dup := c.nonces[key]; dup {
 		writeErr(w, http.StatusUnauthorized, "请求标识（nonce）已使用，拒绝（防重放）")
 		return false
 	}
-	c.nonces[nonce] = now.Add(nonceTTL)
+	c.nonces[key] = now.Add(nonceTTL)
 	return true
 }
 

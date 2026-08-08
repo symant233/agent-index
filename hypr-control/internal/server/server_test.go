@@ -218,8 +218,6 @@ func TestControlEndpoints(t *testing.T) {
 		{"/api/control/volume", `{"action":"mute"}`, "volume:mute"},
 		{"/api/control/media", `{"action":"next"}`, "media:next"},
 		{"/api/control/media", `{"action":"playpause"}`, "media:playpause"},
-		{"/api/control/power", `{"action":"shutdown"}`, "power:shutdown"},
-		{"/api/control/power", `{"action":"restart"}`, "power:restart"},
 	}
 	for _, tc := range cases {
 		mock.mu.Lock()
@@ -251,6 +249,27 @@ func TestControlEndpoints(t *testing.T) {
 		t.Fatalf("lock 调用 = %s", last)
 	}
 
+	// power（危险操作，需 X-Hypr-Confirm 确认头）
+	for _, tc := range []struct{ action, want string }{
+		{"shutdown", "power:shutdown"},
+		{"restart", "power:restart"},
+	} {
+		hdr := replayHeaders()
+		hdr["X-Hypr-Confirm"] = tc.action
+		rp := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/power", token,
+			fmt.Sprintf(`{"action":%q}`, tc.action), hdr)
+		if rp.StatusCode != http.StatusOK {
+			t.Fatalf("power %s（带确认头）状态 = %d", tc.action, rp.StatusCode)
+		}
+		rp.Body.Close()
+		mock.mu.Lock()
+		last = mock.calls[len(mock.calls)-1]
+		mock.mu.Unlock()
+		if last != tc.want {
+			t.Fatalf("power %s 调用 = %s, want %s", tc.action, last, tc.want)
+		}
+	}
+
 	// 参数校验：未知按键 / 未知动作 / 空 keys
 	bad := []struct {
 		path string
@@ -262,6 +281,8 @@ func TestControlEndpoints(t *testing.T) {
 		{"/api/control/mouse", `{"action":"bogus"}`},
 		{"/api/control/volume", `{"action":"bogus"}`},
 		{"/api/control/media", `{"action":"bogus"}`},
+		{"/api/control/power", `{"action":"shutdown"}`}, // 无确认头
+		{"/api/control/power", `{"action":"bogus"}`},
 	}
 	for _, tc := range bad {
 		r := doJSON(t, http.MethodPost, ts.URL+tc.path, token, tc.body)
@@ -295,7 +316,7 @@ func TestReplayProtection(t *testing.T) {
 	// 2. 过期时间戳 → 401
 	old := map[string]string{
 		"X-Hypr-Timestamp": strconv.FormatInt(time.Now().Unix()-1000, 10),
-		"X-Hypr-Nonce":     "stale-nonce",
+		"X-Hypr-Nonce":     "stale-nonce-00000000000000",
 	}
 	r = doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/key", token, `{"key":"enter"}`, old)
 	if r.StatusCode != http.StatusUnauthorized {
@@ -315,6 +336,17 @@ func TestReplayProtection(t *testing.T) {
 		t.Fatalf("重复 nonce 应 401, got %d", r2.StatusCode)
 	}
 	r2.Body.Close()
+
+	// 4. 超长 nonce → 400（防内存 DoS）
+	long := map[string]string{
+		"X-Hypr-Timestamp": strconv.FormatInt(time.Now().Unix(), 10),
+		"X-Hypr-Nonce":     strings.Repeat("a", 200),
+	}
+	r3 := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/key", token, `{"key":"enter"}`, long)
+	if r3.StatusCode != http.StatusBadRequest {
+		t.Fatalf("超长 nonce 应 400, got %d", r3.StatusCode)
+	}
+	r3.Body.Close()
 }
 
 func TestStaticPage(t *testing.T) {

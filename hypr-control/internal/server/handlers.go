@@ -240,11 +240,21 @@ func (c *Control) handleLock(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handlePower 电源操作：{"action":"shutdown|restart"}（延时 10 秒，可取消）。
+// 危险操作：必须携带确认头 X-Hypr-Confirm（值与 action 一致），防止
+// token 被截获/误触时直接关停主机。
 func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action string `json:"action"`
 	}
 	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.Action != "shutdown" && body.Action != "restart" {
+		writeErr(w, http.StatusBadRequest, "未知电源动作: "+body.Action)
+		return
+	}
+	if r.Header.Get("X-Hypr-Confirm") != body.Action {
+		writeErr(w, http.StatusBadRequest, "危险操作需确认头 X-Hypr-Confirm: "+body.Action)
 		return
 	}
 	var err error
@@ -253,9 +263,6 @@ func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
 		err = c.backend.PowerShutdown()
 	case "restart":
 		err = c.backend.PowerRestart()
-	default:
-		writeErr(w, http.StatusBadRequest, "未知电源动作: "+body.Action)
-		return
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

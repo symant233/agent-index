@@ -102,13 +102,15 @@ hctrl kill                        # 优雅停止
 | `POST /api/control/volume` | `{"action":"up\|down\|mute"}` | 系统音量 |
 | `POST /api/control/media` | `{"action":"playpause\|next\|prev\|stop"}` | 媒体控制 |
 | `POST /api/control/lock` | `{}` | 锁屏 |
-| `POST /api/control/power` | `{"action":"shutdown\|restart"}` | 延时 10 秒关机/重启（可 `shutdown /a` 取消） |
+| `POST /api/control/power` | `{"action":"shutdown\|restart"}` + 头 `X-Hypr-Confirm` | 延时 10 秒关机/重启（需确认头，可 `shutdown /a` 取消） |
 
 控制请求需携带已授权设备的令牌：`Authorization: Bearer <token>`（token 在设备授权后由 `/api/pair` 返回）。
 
 所有控制请求还必须携带防重放头（HTTPS 之外的额外防护，防止抓包重放）：
 - `X-Hypr-Timestamp`：Unix 秒级时间戳，与服务器时间差超过 120 秒即拒绝
-- `X-Hypr-Nonce`：一次性随机标识（≥16 字符），重复使用即拒绝
+- `X-Hypr-Nonce`：一次性随机标识（16-128 字符），重复使用即拒绝
+
+> 关机/重启（`/api/control/power`）额外要求确认头 `X-Hypr-Confirm`（值须与 action 一致），防止 token 被截获时直接关停主机。
 
 ## 安全说明
 

@@ -59,16 +59,16 @@ const Remote = (() => {
       if (ev.target === panel) panel.classList.add('hidden'); // 点遮罩关闭
     });
 
-    // 重启 / 关机（危险操作：确认 + 说明 10 秒内可取消）
+    // 重启 / 关机（危险操作：确认 + 二次确认头 + 10 秒可取消）
     document.getElementById('btn-restart').addEventListener('click', () => {
       if (confirm('确定要重启主机吗？将在 10 秒后重启（主机上可执行 shutdown /a 取消）。')) {
-        Api.control('/api/control/power', { action: 'restart' })
+        Api.control('/api/control/power', { action: 'restart' }, { 'X-Hypr-Confirm': 'restart' })
           .catch(window.__hctrlError || console.error);
       }
     });
     document.getElementById('btn-shutdown').addEventListener('click', () => {
       if (confirm('确定要关机吗？将在 10 秒后关机（主机上可执行 shutdown /a 取消）。')) {
-        Api.control('/api/control/power', { action: 'shutdown' })
+        Api.control('/api/control/power', { action: 'shutdown' }, { 'X-Hypr-Confirm': 'shutdown' })
           .catch(window.__hctrlError || console.error);
       }
     });

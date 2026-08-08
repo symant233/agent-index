@@ -20,6 +20,17 @@ const Api = (() => {
   function saveToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); }
   function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 
+  // randomHex 生成 n 字节的十六进制随机串（crypto 优先，回退 Math.random）。
+  function randomHex(bytes) {
+    const buf = new Uint8Array(bytes);
+    if (crypto && crypto.getRandomValues) {
+      crypto.getRandomValues(buf);
+    } else {
+      for (let i = 0; i < bytes; i++) buf[i] = Math.floor(Math.random() * 256);
+    }
+    return Array.from(buf, b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async function pair() {
     const resp = await fetch('/api/pair', {
       method: 'POST',
@@ -34,19 +45,18 @@ const Api = (() => {
     return data;
   }
 
-  async function control(path, body) {
+  async function control(path, body, extraHeaders = {}) {
     // 防重放：时间戳 + 一次性 nonce（服务端校验窗口并去重）
     const ts = Math.floor(Date.now() / 1000).toString();
-    const nonce = (crypto.randomUUID && crypto.randomUUID().replace(/-/g, '')) ||
-      (Math.random().toString(36).slice(2) + Date.now().toString(36));
+    const nonce = randomHex(32);
     const resp = await fetch(path, {
       method: 'POST',
-      headers: {
+      headers: Object.assign({
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + token(),
         'X-Hypr-Timestamp': ts,
         'X-Hypr-Nonce': nonce,
-      },
+      }, extraHeaders),
       body: JSON.stringify(body || {}),
     });
     if (resp.status === 401) throw new AuthError('设备令牌失效，请重新配对');
