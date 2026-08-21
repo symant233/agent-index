@@ -14,10 +14,12 @@ type Backend interface {
 	MouseMoveTo(x, y int) error        // 绝对定位
 	MouseClick(button string) error    // left / right / middle
 	MouseScroll(delta int32) error     // 滚轮，±120
+	MouseDown(button string) error     // 按下不释放（拖拽用，与 MouseUp 配对）
+	MouseUp(button string) error       // 释放（与 MouseDown 配对）
 	// 系统
 	Lock() error                       // 锁屏
-	PowerShutdown() error              // 延时关机（win32 内部延时，可 shutdown /a 取消）
-	PowerRestart() error               // 延时重启
+	PowerShutdown() error              // 立即关机
+	PowerRestart() error               // 立即重启
 	VolumeUp() error
 	VolumeDown() error
 	VolumeMute() error
@@ -38,9 +40,11 @@ func (winBackend) MouseMoveRel(dx, dy int32) error { return win32.MouseMoveRel(d
 func (winBackend) MouseMoveTo(x, y int) error { return win32.MouseMoveTo(x, y) }
 func (winBackend) MouseClick(button string) error { return win32.MouseClick(button) }
 func (winBackend) MouseScroll(delta int32) error { return win32.MouseScroll(delta) }
+func (winBackend) MouseDown(button string) error { return win32.MouseDown(button) }
+func (winBackend) MouseUp(button string) error   { return win32.MouseUp(button) }
 func (winBackend) Lock() error { return win32.LockWorkstation() }
-func (winBackend) PowerShutdown() error { return win32.Shutdown(10) }
-func (winBackend) PowerRestart() error  { return win32.Restart(10) }
+func (winBackend) PowerShutdown() error { return win32.Shutdown(0) }
+func (winBackend) PowerRestart() error  { return win32.Restart(0) }
 func (winBackend) VolumeUp() error { return win32.VolumeUp() }
 func (winBackend) VolumeDown() error { return win32.VolumeDown() }
 func (winBackend) VolumeMute() error { return win32.VolumeMute() }

@@ -139,6 +139,8 @@ func (c *Control) handleKeys(w http.ResponseWriter, r *http.Request) {
 //	move     相对移动 {"dx","dy"}
 //	move_to  绝对定位 {"x","y"}
 //	click    点击     {"button":"left|right|middle"}
+//	down     按下不释放 {"button":...}（拖拽：与 up 配对）
+//	up       释放     {"button":...}（与 down 配对）
 //	scroll   滚轮     {"delta":±120}
 func (c *Control) handleMouse(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -161,6 +163,10 @@ func (c *Control) handleMouse(w http.ResponseWriter, r *http.Request) {
 		err = c.backend.MouseMoveTo(body.X, body.Y)
 	case "click":
 		err = c.backend.MouseClick(body.Button)
+	case "down":
+		err = c.backend.MouseDown(body.Button)
+	case "up":
+		err = c.backend.MouseUp(body.Button)
 	case "scroll":
 		err = c.backend.MouseScroll(body.Delta)
 	default:
@@ -239,7 +245,7 @@ func (c *Control) handleLock(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "lock"})
 }
 
-// handlePower 电源操作：{"action":"shutdown|restart"}（延时 10 秒，可取消）。
+// handlePower 电源操作：{"action":"shutdown|restart"}（立即执行，不可取消）。
 // 危险操作：必须携带确认头 X-Hypr-Confirm（值与 action 一致），防止
 // token 被截获/误触时直接关停主机。
 func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
@@ -268,5 +274,5 @@ func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ok": body.Action, "delay_seconds": "10"})
+	writeJSON(w, http.StatusOK, map[string]string{"ok": body.Action})
 }

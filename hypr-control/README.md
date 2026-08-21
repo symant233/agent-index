@@ -101,11 +101,11 @@ hctrl kill                        # 优雅停止
 | `POST /api/pair` | `{"device_id","name"}` | 登记/查询设备（pending→PIN，authorized→token） |
 | `POST /api/control/key` | `{"key":"enter"}` | 单键（a-z、0-9、f1-f24、方向键、enter/esc/space/win…） |
 | `POST /api/control/keys` | `{"keys":["ctrl","c"]}` | 组合键（≤8 个） |
-| `POST /api/control/mouse` | `{"action":"move","dx","dy"}` 等 | 相对移动 / `move_to`(x,y) / `click`(left\|right\|middle) / `scroll`(±120) |
+| `POST /api/control/mouse` | `{"action":"move","dx","dy"}` 等 | 相对移动 / `move_to`(x,y) / `click`(left\|right\|middle) / `down`+`up`(按住拖拽) / `scroll`(±120) |
 | `POST /api/control/volume` | `{"action":"up\|down\|mute"}` | 系统音量 |
 | `POST /api/control/media` | `{"action":"playpause\|next\|prev\|stop"}` | 媒体控制 |
 | `POST /api/control/lock` | `{}` | 锁屏 |
-| `POST /api/control/power` | `{"action":"shutdown\|restart"}` + 头 `X-Hypr-Confirm` | 延时 10 秒关机/重启（需确认头，可 `shutdown /a` 取消） |
+| `POST /api/control/power` | `{"action":"shutdown\|restart"}` + 头 `X-Hypr-Confirm` | 立即关机/重启（需确认头） |
 
 控制请求需携带已授权设备的令牌：`Authorization: Bearer <token>`（token 在设备授权后由 `/api/pair` 返回）。
 
