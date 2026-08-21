@@ -18,6 +18,20 @@ const (
 	mouseEventAbsolute   = 0x8000
 )
 
+// mouseButtonFlags 把按键名解析为按下/抬起事件标志（纯函数，便于测试）。
+func mouseButtonFlags(button string) (down, up uint32, err error) {
+	switch button {
+	case "left":
+		return mouseEventLeftDown, mouseEventLeftUp, nil
+	case "right":
+		return mouseEventRightDown, mouseEventRightUp, nil
+	case "middle":
+		return mouseEventMiddleDown, mouseEventMiddleUp, nil
+	default:
+		return 0, 0, fmt.Errorf("未知鼠标按键: %q", button)
+	}
+}
+
 // MouseMoveRel 相对当前指针位置移动 (dx, dy) 像素。
 func MouseMoveRel(dx, dy int32) error {
 	return sendInputs([][]byte{mouseInputRaw(dx, dy, 0, mouseEventMove)})
@@ -32,23 +46,34 @@ func MouseMoveTo(x, y int) error {
 	return nil
 }
 
-// MouseClick 点击指定按键：left / right / middle。
+// MouseClick 点击指定按键：left / right / middle（按下+抬起）。
 func MouseClick(button string) error {
-	var down, up uint32
-	switch button {
-	case "left", "":
-		down, up = mouseEventLeftDown, mouseEventLeftUp
-	case "right":
-		down, up = mouseEventRightDown, mouseEventRightUp
-	case "middle":
-		down, up = mouseEventMiddleDown, mouseEventMiddleUp
-	default:
-		return fmt.Errorf("未知鼠标按键: %q", button)
+	down, up, err := mouseButtonFlags(button)
+	if err != nil {
+		return err
 	}
 	return sendInputs([][]byte{
 		mouseInputRaw(0, 0, 0, down),
 		mouseInputRaw(0, 0, 0, up),
 	})
+}
+
+// MouseDown 按下指定按键不释放（用于拖拽；与 MouseUp 配对）。
+func MouseDown(button string) error {
+	down, _, err := mouseButtonFlags(button)
+	if err != nil {
+		return err
+	}
+	return sendInputs([][]byte{mouseInputRaw(0, 0, 0, down)})
+}
+
+// MouseUp 释放指定按键（与 MouseDown 配对）。
+func MouseUp(button string) error {
+	_, up, err := mouseButtonFlags(button)
+	if err != nil {
+		return err
+	}
+	return sendInputs([][]byte{mouseInputRaw(0, 0, 0, up)})
 }
 
 // MouseScroll 滚动滚轮。delta 为正向上、负向下，建议 ±120。

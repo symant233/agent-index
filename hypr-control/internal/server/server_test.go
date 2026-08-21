@@ -57,6 +57,8 @@ func (m *mockBackend) MouseMoveRel(dx, dy int32) error {
 func (m *mockBackend) MouseMoveTo(x, y int) error { m.record("move_to"); return nil }
 func (m *mockBackend) MouseClick(button string) error { m.record("click:" + button); return nil }
 func (m *mockBackend) MouseScroll(delta int32) error { m.record("scroll"); return nil }
+func (m *mockBackend) MouseDown(button string) error { m.record("down:" + button); return nil }
+func (m *mockBackend) MouseUp(button string) error   { m.record("up:" + button); return nil }
 func (m *mockBackend) Lock() error { m.record("lock"); return nil }
 func (m *mockBackend) PowerShutdown() error { m.record("power:shutdown"); return nil }
 func (m *mockBackend) PowerRestart() error  { m.record("power:restart"); return nil }
@@ -213,6 +215,8 @@ func TestControlEndpoints(t *testing.T) {
 		{"/api/control/mouse", `{"action":"move","dx":10,"dy":-5}`, "move_rel"},
 		{"/api/control/mouse", `{"action":"move_to","x":800,"y":600}`, "move_to"},
 		{"/api/control/mouse", `{"action":"click","button":"right"}`, "click:right"},
+		{"/api/control/mouse", `{"action":"down","button":"left"}`, "down:left"},
+		{"/api/control/mouse", `{"action":"up","button":"left"}`, "up:left"},
 		{"/api/control/mouse", `{"action":"scroll","delta":-120}`, "scroll"},
 		{"/api/control/volume", `{"action":"up"}`, "volume:up"},
 		{"/api/control/volume", `{"action":"mute"}`, "volume:mute"},

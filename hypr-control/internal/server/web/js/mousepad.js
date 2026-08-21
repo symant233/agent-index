@@ -1,83 +1,226 @@
 'use strict';
-// 触控板：根据手指滑动速度缩放鼠标位移（滑得快 → 移得多，滑得慢 → 移得少），
-// 节流窗口内累积位移后一次发送（不丢帧、更跟手），点按=左键，滚轮滚动，右键/中键按钮。
+// 触控板手势（Pointer Events 逐指跟踪，各手势互斥）：
+//   单指滑动移动指针（速度感知缩放，无死区）· 单指点按=左键
+//   单指/双击第二下长按不动（~450ms）= 右键
+//   双击第二下按住并移动 = 拖拽（左键按下 + 同步移动，松手释放）
+//   双指快速同按同抬 = 右键 · 三指快速同按同抬 = 中键
+//   滚轮滚动 · 右键/中键按钮仍可用
 const Mousepad = (() => {
-  const THROTTLE_MS = 12;   // 发送节流（更短 → 更跟手、少卡顿）
-  const BASE_SPEED = 0.5;   // 基准速度 px/ms：0.5px/ms 即 1 倍（整体更灵敏）
+  const THROTTLE_MS = 12;   // 位移发送节流
+  const BASE_SPEED = 0.5;   // 基准速度 px/ms（1 倍）
   const MIN_FACTOR = 0.5;   // 最慢时的位移缩放
   const MAX_FACTOR = 4.0;   // 最快时的位移缩放
 
-  let x0 = null, y0 = null, moved = false, lastSent = 0;
+  const DBL_TAP_MS = 300;   // 双击判定窗口：第二下的按下时刻
+  const DRAG_MOVE_PX = 10;  // 双击第二下超过此位移 → 触发拖拽
+  const HOLD_MS = 450;      // 长按（不动）触发右键的时长
+  const HOLD_MOVE_PX = 12;  // 长按允许的最大位移
+  const TAP_MOVE_PX = 12;   // 点按判定：抬起时累计位移上限
+  const MULTI_MS = 300;     // 多指手势：按下到全部抬起的总时长窗口
+  const MULTI_MOVE_PX = 25; // 多指手势允许的最大累计位移
+
+  const pad = document.getElementById('mousepad');
+  const pointers = new Map();   // pointerId → {x, y, sx, sy}
+
+  // ---- 单指指针移动（速度感知缩放） ----
+  let lastSent = 0;
   let lastMoveT = 0, smoothSpeed = 0;
-  let accX = 0, accY = 0;   // 节流窗口内累积位移
+  let accX = 0, accY = 0;
 
-  function init() {
-    const pad = document.getElementById('mousepad');
-
-    pad.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      pad.setPointerCapture(e.pointerId);
-      x0 = e.clientX;
-      y0 = e.clientY;
-      moved = false;
-      lastMoveT = 0;
-      smoothSpeed = 0;
-      accX = accY = 0;
-    });
-
-    pad.addEventListener('pointermove', (e) => {
-      if (x0 === null) return;
-      const dx = e.clientX - x0;
-      const dy = e.clientY - y0;
-      x0 = e.clientX;
-      y0 = e.clientY;
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
-
-      // 速度感知：瞬时速度 → 指数平滑 → 位移缩放因子
-      let factor = 1;
-      const now = performance.now();
-      if (lastMoveT > 0) {
-        const dt = Math.max(now - lastMoveT, 1);
-        const inst = Math.hypot(dx, dy) / dt; // px/ms
-        smoothSpeed = 0.55 * smoothSpeed + 0.45 * inst;
-        factor = Math.min(MAX_FACTOR, Math.max(MIN_FACTOR, smoothSpeed / BASE_SPEED));
-      }
-      lastMoveT = now;
-
-      // 累积位移（缩放后），节流到期一次发送，避免丢帧导致卡顿
-      accX += dx * factor;
-      accY += dy * factor;
-      const t = Date.now();
-      if (t - lastSent < THROTTLE_MS) return;
-      lastSent = t;
-      send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
-      accX = accY = 0;
-    });
-
-    pad.addEventListener('pointerup', () => {
-      x0 = null;
-      // 发送残留累积位移（若尚未发送）
-      if (accX !== 0 || accY !== 0) {
-        send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
-        accX = accY = 0;
-      }
-      if (!moved) send({ action: 'click', button: 'left' });
-    });
-
-    pad.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      send({ action: 'scroll', delta: e.deltaY < 0 ? 120 : -120 });
-    }, { passive: false });
-
-    document.getElementById('btn-rbtn').addEventListener('click', () =>
-      send({ action: 'click', button: 'right' }));
-    document.getElementById('btn-mbtn').addEventListener('click', () =>
-      send({ action: 'click', button: 'middle' }));
-  }
+  // ---- 手势状态（每轮手势开始时复位） ----
+  let totalMove = 0;        // 本轮手势累计位移（原始 px，判定用）
+  let lastTapUp = 0;        // 上一次点按抬起时刻（双击判定）
+  let lastDragEnd = 0;      // 上一次拖拽结束时刻
+  let dragArm = false;      // 双击第二下按住中（移动→拖拽 / 超时→右键 / 快抬→点按）
+  let dragging = false;     // 拖拽已触发（左键按住中）
+  let holdTimer = null;     // 长按定时器
+  let holdFired = false;    // 长按右键已触发
+  let multiGauge = null;    // 多指手势判定 {count, downT}
+  let multiFired = false;   // 多指点按已触发（残留移动不生效）
+  let multiTouched = false; // 本轮手势出现过 ≥2 指（抑制点按）
 
   function send(body) {
     Api.control('/api/control/mouse', body).catch(window.__hctrlError || console.error);
   }
+
+  function flushAcc() {
+    if (accX !== 0 || accY !== 0) {
+      send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
+    }
+    accX = accY = 0;
+  }
+
+  function cancelHold() {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  }
+
+  function armHold() {
+    cancelHold();
+    holdTimer = setTimeout(() => {
+      holdTimer = null;
+      // 到期仍单指、未移动多少、未在拖拽 → 右键
+      if (pointers.size === 1 && !dragging && !holdFired && totalMove < HOLD_MOVE_PX) {
+        holdFired = true;
+        dragArm = false;
+        send({ action: 'click', button: 'right' });
+      }
+    }, HOLD_MS);
+  }
+
+  function trackMove(dx, dy) {
+    let factor = 1;
+    const now = performance.now();
+    if (lastMoveT > 0) {
+      const dt = Math.max(now - lastMoveT, 1);
+      const inst = Math.hypot(dx, dy) / dt;
+      smoothSpeed = 0.55 * smoothSpeed + 0.45 * inst;
+      factor = Math.min(MAX_FACTOR, Math.max(MIN_FACTOR, smoothSpeed / BASE_SPEED));
+    }
+    lastMoveT = now;
+    accX += dx * factor;
+    accY += dy * factor;
+    const t = Date.now();
+    if (t - lastSent < THROTTLE_MS) return;
+    lastSent = t;
+    send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
+    accX = accY = 0;
+  }
+
+  // ---- pointer 事件 ----
+  pad.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    pad.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
+
+    if (pointers.size === 1) {
+      // 新一轮单指手势：复位判定状态
+      totalMove = 0;
+      holdFired = false;
+      multiFired = false;
+      multiGauge = null;
+      multiTouched = false;
+      lastMoveT = 0; smoothSpeed = 0;
+      const now = performance.now();
+      dragArm = (now - lastTapUp < DBL_TAP_MS) && (now - lastDragEnd >= DBL_TAP_MS);
+      // 长按计时：普通单指长按 与 双击第二下按住不动，都触发右键
+      armHold();
+      return;
+    }
+    // 新手指加入：取消长按与移动残留，进入/更新多指判定
+    cancelHold();
+    flushAcc();
+    multiTouched = true;
+    if (!multiFired) {
+      if (!multiGauge) multiGauge = { count: pointers.size, downT: performance.now() };
+      else multiGauge.count = Math.max(multiGauge.count, pointers.size);
+    }
+    if (dragArm && !dragging) dragArm = false; // 多指按下使双击拖拽失效
+  });
+
+  pad.addEventListener('pointermove', (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x;
+    const dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+
+    if (pointers.size > 1) {
+      // 多指：只累计位移用于判定，不移动指针
+      totalMove += Math.hypot(dx, dy);
+      return;
+    }
+    if (multiFired || holdFired) return; // 多指点按/长按右键后的残留移动不生效
+
+    totalMove = Math.max(totalMove, Math.hypot(e.clientX - p.sx, e.clientY - p.sy));
+    if (totalMove > HOLD_MOVE_PX) cancelHold();
+
+    if (dragArm) {
+      // 双击第二下：超过阈值位移 → 实际触发拖拽（左键按下）
+      if (!dragging && totalMove >= DRAG_MOVE_PX) {
+        dragging = true;
+        cancelHold();
+        send({ action: 'down', button: 'left' });
+      }
+      if (!dragging) return; // 预备期小幅移动不移动指针（双击/拖拽判定的死区）
+    }
+    trackMove(dx, dy); // 正常移动：立即生效，无死区
+  });
+
+  pad.addEventListener('pointerup', (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    pointers.delete(e.pointerId);
+
+    if (multiFired) {
+      // 多指点按已触发：等全部手指离开后结束本轮手势
+      if (pointers.size === 0) {
+        multiFired = false;
+        multiGauge = null;
+        totalMove = 0;
+      }
+      return;
+    }
+
+    if (pointers.size > 0) {
+      // 还有手指在屏上：不做点按判定；多指判定 gauge 保留
+      // （双指 tap 两根手指先后抬起，最后一根抬起时才判定）
+      flushAcc();
+      cancelHold();
+      return;
+    }
+
+    // 最后一根手指抬起：收尾判定
+    cancelHold();
+    flushAcc();
+    const now = performance.now();
+    const wasDragging = dragging;
+    if (dragging) {
+      send({ action: 'up', button: 'left' });
+      dragging = false;
+      lastDragEnd = now;
+    }
+    dragArm = false;
+
+    // 多指手势判定：全部按下的时间窗内、位移小、指头数对 → 右键/中键
+    if (multiGauge && !multiFired) {
+      const dt = now - multiGauge.downT;
+      const n = multiGauge.count;
+      if (dt <= MULTI_MS && totalMove < MULTI_MOVE_PX && (n === 2 || n === 3)) {
+        send({ action: 'click', button: n === 2 ? 'right' : 'middle' });
+      }
+      multiGauge = null;
+      return; // 多指手势不参与点按判定
+    }
+
+    // 单指点按：未长按、未拖拽、未多指、位移小 → 左键
+    if (!holdFired && !wasDragging && !multiTouched && totalMove < TAP_MOVE_PX) {
+      send({ action: 'click', button: 'left' });
+      lastTapUp = now;
+    }
+  });
+
+  pad.addEventListener('pointercancel', (e) => {
+    // 系统接管/取消：清状态；拖拽中必须释放左键，避免主机上按键卡死
+    pointers.delete(e.pointerId);
+    cancelHold();
+    flushAcc();
+    if (dragging) send({ action: 'up', button: 'left' });
+    dragArm = false; dragging = false;
+    multiGauge = null; multiFired = false;
+    if (pointers.size === 0) totalMove = 0;
+  });
+
+  pad.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    send({ action: 'scroll', delta: e.deltaY < 0 ? 120 : -120 });
+  }, { passive: false });
+
+  document.getElementById('btn-rbtn').addEventListener('click', () =>
+    send({ action: 'click', button: 'right' }));
+  document.getElementById('btn-mbtn').addEventListener('click', () =>
+    send({ action: 'click', button: 'middle' }));
+
+  function init() { /* 事件在模块加载时已绑定 */ }
 
   return { init, send };
 })();
