@@ -116,7 +116,13 @@ html, body {
   touch-action: none;
   cursor: crosshair;
 }
-.mousepad-label { color: var(--muted); font-size: 12px; pointer-events: none; }
+.mousepad-label {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+  pointer-events: none;
+}
 .mousepad-actions { display: flex; gap: 8px; margin-top: 4px; flex-shrink: 0; }
 
 /* ---------- 按钮 ---------- */
