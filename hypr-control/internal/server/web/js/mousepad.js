@@ -11,7 +11,9 @@ const Mousepad = (() => {
   const MIN_FACTOR = 0.5;   // 最慢时的位移缩放
   const MAX_FACTOR = 4.0;   // 最快时的位移缩放
 
-  const DBL_TAP_MS = 300;   // 双击判定窗口：第二下的按下时刻
+  const DBL_TAP_MS = 250;   // 双击窗口；同时是单击延迟确认时长：
+                            // 第一下 tap 挂起，窗口内无第二下按下才落地为单击
+                            // （触控板标准行为，换取拖拽/长按不破坏主机选区）
   const DRAG_MOVE_PX = 10;  // 双击第二下超过此位移 → 触发拖拽
   const HOLD_MS = 450;      // 长按（不动）触发右键的时长
   const HOLD_MOVE_PX = 12;  // 长按允许的最大位移
@@ -38,6 +40,9 @@ const Mousepad = (() => {
   let multiGauge = null;    // 多指手势判定 {count, downT}
   let multiFired = false;   // 多指点按已触发（残留移动不生效）
   let multiTouched = false; // 本轮手势出现过 ≥2 指（抑制点按）
+  let tapPending = false;   // 第一下 tap 挂起中（延迟确认，见 armTap）
+  let tapTimer = null;      // 挂起 tap 的落地定时器
+  let dragArmWasSecond = false; // 本次 dragArm 是否来自双击第二下
 
   function send(body) {
     Api.control('/api/control/mouse', body).catch(window.__hctrlError || console.error);
@@ -54,6 +59,26 @@ const Mousepad = (() => {
     if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
   }
 
+  // armTap 把第一下 tap 挂起，DBL_TAP_MS 内无第二下按下才落地为单击。
+  // 第二下按住期间由手势出口决定：快抬→补发（双击）、移动→丢弃（拖拽不
+  // 破坏选区）、长按→丢弃（右键作用于原选区）。
+  function armTap() {
+    cancelTap();
+    tapPending = true;
+    tapTimer = setTimeout(() => {
+      tapTimer = null;
+      if (tapPending) {
+        tapPending = false;
+        send({ action: 'click', button: 'left' });
+      }
+    }, DBL_TAP_MS);
+  }
+
+  function cancelTap() {
+    if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+    tapPending = false;
+  }
+
   function armHold() {
     cancelHold();
     holdTimer = setTimeout(() => {
@@ -62,6 +87,7 @@ const Mousepad = (() => {
       if (pointers.size === 1 && !dragging && !holdFired && totalMove < HOLD_MOVE_PX) {
         holdFired = true;
         dragArm = false;
+        cancelTap(); // 长按生效：挂起的单击不补发（右键作用于原选区）
         send({ action: 'click', button: 'right' });
       }
     }, HOLD_MS);
@@ -101,13 +127,23 @@ const Mousepad = (() => {
       multiTouched = false;
       lastMoveT = 0; smoothSpeed = 0;
       const now = performance.now();
-      dragArm = (now - lastTapUp < DBL_TAP_MS) && (now - lastDragEnd >= DBL_TAP_MS);
+      const inDblWindow = now - lastTapUp < DBL_TAP_MS && now - lastDragEnd >= DBL_TAP_MS;
+      if (inDblWindow && tapPending) {
+        // 双击第二下：挂起的第一下先不发（由本下手势的出口决定补发/丢弃）
+        cancelTap();
+        dragArm = true;
+        dragArmWasSecond = true;
+      } else {
+        dragArm = false;
+        dragArmWasSecond = false;
+      }
       // 长按计时：普通单指长按 与 双击第二下按住不动，都触发右键
       armHold();
       return;
     }
     // 新手指加入：取消长按与移动残留，进入/更新多指判定
     cancelHold();
+    cancelTap(); // 多指手势丢弃挂起的第一下（不补发）
     flushAcc();
     multiTouched = true;
     if (!multiFired) {
@@ -175,6 +211,8 @@ const Mousepad = (() => {
     const now = performance.now();
     const wasDragging = dragging;
     if (dragging) {
+      // 拖拽结束：挂起的第一下不补发（拖拽生效 = 单击被消费为按住）
+      cancelTap();
       send({ action: 'up', button: 'left' });
       dragging = false;
       lastDragEnd = now;
@@ -192,10 +230,17 @@ const Mousepad = (() => {
       return; // 多指手势不参与点按判定
     }
 
-    // 单指点按：未长按、未拖拽、未多指、位移小 → 左键
+    // 单指点按：未长按、未拖拽、未多指、位移小 → 左键（挂起，延迟落地）
     if (!holdFired && !wasDragging && !multiTouched && totalMove < TAP_MOVE_PX) {
-      send({ action: 'click', button: 'left' });
-      lastTapUp = now;
+      if (dragArmWasSecond) {
+        // 双击第二下快抬：补发挂起的第一下 + 本下 → 主机收到双击
+        send({ action: 'click', button: 'left' });
+        send({ action: 'click', button: 'left' });
+        lastTapUp = 0; // 双击完成，紧接的第三下不算双击窗口
+      } else {
+        armTap();
+        lastTapUp = now;
+      }
     }
   });
 
@@ -203,6 +248,7 @@ const Mousepad = (() => {
     // 系统接管/取消：清状态；拖拽中必须释放左键，避免主机上按键卡死
     pointers.delete(e.pointerId);
     cancelHold();
+    cancelTap();
     flushAcc();
     if (dragging) send({ action: 'up', button: 'left' });
     dragArm = false; dragging = false;
