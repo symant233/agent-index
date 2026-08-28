@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"fmt"
-	"time"
 
 	"hypr-control/internal/win32"
 )
@@ -26,9 +25,6 @@ const DefaultTargetPercent = 20
 type ShutdownVolume struct {
 	// TargetPercent 关机前的目标音量百分比（0-100）。
 	TargetPercent float64
-
-	// delay 调音量前的等待时间（测试中置 0 立即执行；生产使用默认值）。
-	delay time.Duration
 }
 
 // NewShutdownVolume 以默认参数构造插件。
@@ -50,14 +46,10 @@ func (p *ShutdownVolume) Hooks() []Hook { return []Hook{HookShutdown} }
 // OnHook 实现 Plugin：把主音量设到目标百分比。
 //
 // 系统给 WM_QUERYENDSESSION 的响应窗口约 5 秒；COM 调音量为毫秒级，
-// delay（若设置）也在预算内。失败只返回错误（由 Manager 记日志），
-// 绝不阻塞关机。
+// 失败只返回错误（由 Manager 记日志），绝不阻塞关机。
 func (p *ShutdownVolume) OnHook(hook Hook, ctx *Context) error {
 	if hook != HookShutdown {
 		return nil
-	}
-	if p.delay > 0 {
-		time.Sleep(p.delay)
 	}
 	before, berr := win32.GetMasterVolumePercent()
 	if berr != nil {

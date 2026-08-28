@@ -83,6 +83,11 @@ type msgW struct {
 type ShutdownListener interface {
 	// Stop 请求监听线程退出。服务进程常驻，一般无需调用；
 	// 进程退出时窗口与线程随之销毁。
+	//
+	// 注意：监听器是一次性的——Stop 后同名窗口类已注册，再次调用
+	// StartShutdownListener 必然失败（RegisterClassExW 返回
+	// ERROR_CLASS_ALREADY_EXISTS），且窗口过程经全局单例查找 state，
+	// 不支持多实例并存。当前服务常驻运行，不触发此限制。
 	Stop()
 }
 

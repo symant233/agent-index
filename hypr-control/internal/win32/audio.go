@@ -6,7 +6,7 @@ package win32
 // 直接设置主音量标量（0.0-1.0），与 SendInput 音量键的步进方式互补：
 // 步进方式无法可靠地"设置到指定百分比"，关机前降音量需要精确设置。
 //
-// float 参数 ABI 说明（Go 1.26 / windows/amd64 实测验证）：
+// float 参数 ABI 说明（Go 1.22 / windows/amd64 实测验证）：
 // COM 方法 SetMasterVolumeLevelScalar(fLevel float32, pguidEventContext)
 // 的 float 参数按 x64 调用约定应放入 XMM 寄存器；Go 的 syscall.SyscallN
 // 只接收整数，但会同步把整数寄存器的值装载进对应的 XMM 寄存器，
@@ -15,6 +15,10 @@ package win32
 // 而 float64 位型（Float64bits）会被 COM 按 float32 重读低 32 位而失效。
 // 纯整数寄存器（XMM 未装载）环境下此调用约定是否成立未验证，
 // windows/amd64 下 syscall.SyscallN 始终同步装载 XMM，与实际运行环境一致。
+//
+// 注意：上述行为依赖 Go 运行时的实现细节（SyscallN 装载 XMM），并非
+// ABI 承诺。升级 Go 版本后必须按 README 的验证步骤复测音量设置是否仍
+// 精确生效；若失效，考虑改用 golang.org/x/sys/windows 或 cgo 调用。
 
 import (
 	"fmt"
