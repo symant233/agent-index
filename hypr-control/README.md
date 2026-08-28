@@ -64,8 +64,9 @@ hctrl plugins disable shutdown-volume  # 禁用插件
 hctrl plugins enable shutdown-volume
 # 验证：
 #   1. 把系统音量调大（如 80%）
-#   2. 执行 shutdown /s /t 30（30 秒后关机，留足观察时间）
-#   3. 任务栏音量应立即降到 20%；shutdown /a 可取消关机
+#   2. 执行 shutdown /s /t 30（30 秒倒计时后系统才真正开始关机）
+#   3. 注意：倒计时阶段不广播 WM_QUERYENDSESSION，音量在倒计时结束、
+#      系统开始关机的瞬间才降到 20%（赶在蓝牙断开前）；shutdown /a 可取消关机
 ```
 
 > 音量目标是编译期常量（`internal/plugins/builtin.go` 的 `DefaultTargetPercent`）；
