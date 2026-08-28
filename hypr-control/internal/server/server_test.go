@@ -20,8 +20,36 @@ import (
 
 // mockBackend 记录后端调用，便于断言参数传递。
 type mockBackend struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	calls []string
+}
+
+// hookedDispatcher 记录插件分发调用（测试电源顺序用）。
+type hookedDispatcher struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (h *hookedDispatcher) Dispatch(hook string, _ func(string, ...any)) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls = append(h.calls, "hook:"+hook)
+	return nil
+}
+
+// newHookedTestServer 构造带插件分发记录的测试服务。
+func newHookedTestServer(t *testing.T) (*httptest.Server, *mockBackend, *hookedDispatcher, *devices.Store) {
+	t.Helper()
+	store, err := devices.Open(filepath.Join(t.TempDir(), config.DevicesFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockBackend{}
+	hd := &hookedDispatcher{}
+	c := &Control{store: store, backend: mock, plugins: hd}
+	ts := httptest.NewServer(c.handler())
+	t.Cleanup(ts.Close)
+	return ts, mock, hd, store
 }
 
 func (m *mockBackend) record(s string) {
@@ -52,23 +80,24 @@ func (m *mockBackend) Chord(names []string) error {
 	return nil
 }
 func (m *mockBackend) MouseMoveRel(dx, dy int32) error {
-	m.record("move_rel"); return nil
+	m.record("move_rel")
+	return nil
 }
-func (m *mockBackend) MouseMoveTo(x, y int) error { m.record("move_to"); return nil }
+func (m *mockBackend) MouseMoveTo(x, y int) error     { m.record("move_to"); return nil }
 func (m *mockBackend) MouseClick(button string) error { m.record("click:" + button); return nil }
-func (m *mockBackend) MouseScroll(delta int32) error { m.record("scroll"); return nil }
-func (m *mockBackend) MouseDown(button string) error { m.record("down:" + button); return nil }
-func (m *mockBackend) MouseUp(button string) error   { m.record("up:" + button); return nil }
-func (m *mockBackend) Lock() error { m.record("lock"); return nil }
-func (m *mockBackend) PowerShutdown() error { m.record("power:shutdown"); return nil }
-func (m *mockBackend) PowerRestart() error  { m.record("power:restart"); return nil }
-func (m *mockBackend) VolumeUp() error   { m.record("volume:up"); return nil }
-func (m *mockBackend) VolumeDown() error { m.record("volume:down"); return nil }
-func (m *mockBackend) VolumeMute() error { m.record("volume:mute"); return nil }
-func (m *mockBackend) MediaPlayPause() error { m.record("media:playpause"); return nil }
-func (m *mockBackend) MediaNext() error { m.record("media:next"); return nil }
-func (m *mockBackend) MediaPrev() error { m.record("media:prev"); return nil }
-func (m *mockBackend) MediaStop() error { m.record("media:stop"); return nil }
+func (m *mockBackend) MouseScroll(delta int32) error  { m.record("scroll"); return nil }
+func (m *mockBackend) MouseDown(button string) error  { m.record("down:" + button); return nil }
+func (m *mockBackend) MouseUp(button string) error    { m.record("up:" + button); return nil }
+func (m *mockBackend) Lock() error                    { m.record("lock"); return nil }
+func (m *mockBackend) PowerShutdown() error           { m.record("power:shutdown"); return nil }
+func (m *mockBackend) PowerRestart() error            { m.record("power:restart"); return nil }
+func (m *mockBackend) VolumeUp() error                { m.record("volume:up"); return nil }
+func (m *mockBackend) VolumeDown() error              { m.record("volume:down"); return nil }
+func (m *mockBackend) VolumeMute() error              { m.record("volume:mute"); return nil }
+func (m *mockBackend) MediaPlayPause() error          { m.record("media:playpause"); return nil }
+func (m *mockBackend) MediaNext() error               { m.record("media:next"); return nil }
+func (m *mockBackend) MediaPrev() error               { m.record("media:prev"); return nil }
+func (m *mockBackend) MediaStop() error               { m.record("media:stop"); return nil }
 
 // newTestServer 构造带 mock 后端与真实设备存储的测试服务。
 func newTestServer(t *testing.T) (*httptest.Server, *mockBackend, *devices.Store, string) {
@@ -139,8 +168,8 @@ func TestPairFlow(t *testing.T) {
 	var out struct {
 		Status string `json:"status"`
 		Device struct {
-			ID   string `json:"id"`
-			PIN  string `json:"pin"`
+			ID  string `json:"id"`
+			PIN string `json:"pin"`
 		} `json:"device"`
 	}
 	json.NewDecoder(resp.Body).Decode(&out)
@@ -198,7 +227,9 @@ func TestControlEndpoints(t *testing.T) {
 	// 登记并授权设备
 	resp := doJSON(t, http.MethodPost, ts.URL+"/api/pair", "", `{"device_id":"dev-9","name":"平板"}`)
 	var out struct {
-		Device struct{ PIN string `json:"pin"` } `json:"device"`
+		Device struct {
+			PIN string `json:"pin"`
+		} `json:"device"`
 	}
 	json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
@@ -303,7 +334,9 @@ func TestReplayProtection(t *testing.T) {
 
 	resp := doJSON(t, http.MethodPost, ts.URL+"/api/pair", "", `{"device_id":"dev-rp","name":"x"}`)
 	var out struct {
-		Device struct{ PIN string `json:"pin"` } `json:"device"`
+		Device struct {
+			PIN string `json:"pin"`
+		} `json:"device"`
 	}
 	json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
@@ -410,4 +443,81 @@ func readBody(r *http.Response) string {
 		}
 	}
 	return sb.String()
+}
+
+// TestPowerDispatchesShutdownHookBeforePower 验证电源操作先分发插件
+// shutdown 钩子、再执行后端关机/重启（保证插件动作赶在系统断开蓝牙前）。
+func TestPowerDispatchesShutdownHookBeforePower(t *testing.T) {
+	ts, mock, hd, store := newHookedTestServer(t)
+
+	// 登记并授权设备
+	resp := doJSON(t, http.MethodPost, ts.URL+"/api/pair", "", `{"device_id":"dev-plug","name":"x"}`)
+	var out struct {
+		Device struct {
+			PIN string `json:"pin"`
+		} `json:"device"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	token := authorizeDevice(t, store, out.Device.PIN)
+
+	for _, tc := range []struct{ action, wantPower string }{
+		{"shutdown", "power:shutdown"},
+		{"restart", "power:restart"},
+	} {
+		mock.mu.Lock()
+		mock.calls = nil
+		mock.mu.Unlock()
+		hd.mu.Lock()
+		hd.calls = nil
+		hd.mu.Unlock()
+
+		hdr := replayHeaders()
+		hdr["X-Hypr-Confirm"] = tc.action
+		r := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/power", token,
+			fmt.Sprintf(`{"action":%q}`, tc.action), hdr)
+		if r.StatusCode != http.StatusOK {
+			t.Fatalf("power %s 状态 = %d", tc.action, r.StatusCode)
+		}
+		r.Body.Close()
+
+		// 顺序断言：hook:shutdown 必须在 power:<action> 之前
+		mock.mu.Lock()
+		hd.mu.Lock()
+		merged := append(append([]string(nil), hd.calls...), mock.calls...)
+		hd.mu.Unlock()
+		mock.mu.Unlock()
+		if len(merged) != 2 || merged[0] != "hook:shutdown" || merged[1] != tc.wantPower {
+			t.Fatalf("%s 调用顺序 = %v, want [hook:shutdown %s]", tc.action, merged, tc.wantPower)
+		}
+	}
+}
+
+// TestPowerNoPluginsStillWorks 验证未装配插件时电源操作不受影响。
+func TestPowerNoPluginsStillWorks(t *testing.T) {
+	ts, mock, store, _ := newTestServer(t)
+
+	resp := doJSON(t, http.MethodPost, ts.URL+"/api/pair", "", `{"device_id":"dev-np","name":"x"}`)
+	var out struct {
+		Device struct {
+			PIN string `json:"pin"`
+		} `json:"device"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	token := authorizeDevice(t, store, out.Device.PIN)
+
+	hdr := replayHeaders()
+	hdr["X-Hypr-Confirm"] = "shutdown"
+	r := doJSONHeaders(t, http.MethodPost, ts.URL+"/api/control/power", token, `{"action":"shutdown"}`, hdr)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("无插件时 power 状态 = %d", r.StatusCode)
+	}
+	r.Body.Close()
+	mock.mu.Lock()
+	last := mock.calls[len(mock.calls)-1]
+	mock.mu.Unlock()
+	if last != "power:shutdown" {
+		t.Fatalf("无插件时 power 调用 = %s", last)
+	}
 }

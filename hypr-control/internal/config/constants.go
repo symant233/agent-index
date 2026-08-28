@@ -17,4 +17,7 @@ const (
 
 	// DevicesFileName 是设备表文件名。
 	DevicesFileName = "devices.json"
+
+	// PluginsFileName 是插件启用状态文件名。
+	PluginsFileName = "plugins.json"
 )

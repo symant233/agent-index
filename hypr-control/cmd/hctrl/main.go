@@ -20,13 +20,21 @@ const usage = `hctrl —— 局域网主机遥控器（服务端 + 管理 CLI）
   hctrl devices allow <PIN>                   允许一个待授权设备（输入网页显示的 6 位 PIN）
   hctrl devices deny <ID|PIN>                 拒绝一个待授权设备
   hctrl devices revoke <ID>                   吊销一个已授权设备
+  hctrl plugins list                          列出全部插件及状态（初始均为禁用）
+  hctrl plugins enable <名称>                 启用插件
+  hctrl plugins disable <名称>                禁用插件
   hctrl autostart enable|disable|status       注册/移除/查看开机自启动
   hctrl -h | --help                           显示本帮助
+
+内置插件:
+  shutdown-volume   系统关机/重启事件后、蓝牙音箱断开前，自动把主音量
+                    降到 20%，避免音箱以大音量播放断连提示音。
 
 示例:
   hctrl serve --daemon
   hctrl devices list
   hctrl devices allow 483920
+  hctrl plugins enable shutdown-volume
 `
 
 func main() {
@@ -51,6 +59,8 @@ func main() {
 		err = cmdKill(args[1:])
 	case "devices":
 		err = cmdDevices(args[1:])
+	case "plugins":
+		err = cmdPlugins(args[1:])
 	case "autostart":
 		err = cmdAutostart(args[1:])
 	default:

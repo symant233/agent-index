@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,8 +39,9 @@ func clientFor(args []string) (*admin.Client, error) {
 }
 
 // cmdServe 启动常驻控制服务。
-//   hctrl serve                    前台运行（阻塞）
-//   hctrl serve --daemon           后台运行（释放当前终端）
+//
+//	hctrl serve                    前台运行（阻塞）
+//	hctrl serve --daemon           后台运行（释放当前终端）
 func cmdServe(args []string) error {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -270,5 +272,73 @@ func printDevices(devs []admin.Device) {
 		}
 		fmt.Printf("%-14s %-10s %-16s %-20s %s%s\n",
 			d.ID, d.Status, d.IP, d.Name, d.UA, pin)
+	}
+}
+
+// cmdPlugins 插件管理：查询/启用/禁用。
+//
+//	hctrl plugins list                列出全部插件与状态
+//	hctrl plugins enable <名称>       启用插件（如 shutdown-volume）
+//	hctrl plugins disable <名称>      禁用插件
+//
+// 全局 flag（--data-dir / --port）须位于子命令词之前。
+func cmdPlugins(args []string) error {
+	cfg, rest, err := config.ParseFlagsWithArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 {
+		fmt.Fprintln(os.Stderr, "用法: hctrl plugins list|enable <名称>|disable <名称>")
+		os.Exit(2)
+	}
+	cl, err := admin.NewClient(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sub, subArgs := rest[0], rest[1:]
+	switch sub {
+	case "list", "ls":
+		list, err := cl.ListPlugins(ctx)
+		if err != nil {
+			return err
+		}
+		printPlugins(list)
+	case "enable", "on":
+		if len(subArgs) < 1 {
+			return fmt.Errorf("用法: hctrl plugins enable <名称>（hctrl plugins list 可查名称）")
+		}
+		if err := cl.EnablePlugin(ctx, subArgs[0]); err != nil {
+			return err
+		}
+		fmt.Printf("插件 %s 已启用\n", subArgs[0])
+	case "disable", "off":
+		if len(subArgs) < 1 {
+			return fmt.Errorf("用法: hctrl plugins disable <名称>（hctrl plugins list 可查名称）")
+		}
+		if err := cl.DisablePlugin(ctx, subArgs[0]); err != nil {
+			return err
+		}
+		fmt.Printf("插件 %s 已禁用\n", subArgs[0])
+	default:
+		fmt.Fprintf(os.Stderr, "未知插件子命令: %q\n", sub)
+		os.Exit(2)
+	}
+	return nil
+}
+
+func printPlugins(list []admin.Plugin) {
+	if len(list) == 0 {
+		fmt.Println("（无插件）")
+		return
+	}
+	for _, p := range list {
+		state := "禁用"
+		if p.Enabled {
+			state = "启用"
+		}
+		fmt.Printf("%-18s [%s] 钩子: %s\n    %s\n", p.Name, state, strings.Join(p.Hooks, ","), p.Desc)
 	}
 }

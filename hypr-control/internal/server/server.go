@@ -28,10 +28,19 @@ var webFS embed.FS
 type Control struct {
 	store   *devices.Store
 	backend control.Backend
+	plugins PluginDispatcher
 
 	// 防重放：nonce → 过期时间（防止抓包重放控制命令）。
 	nonceMu sync.Mutex
 	nonces  map[string]time.Time
+}
+
+// PluginDispatcher 是控制服务对插件机制的依赖视图（由 plugins.Manager 实现），
+// 定义在 server 包以避免 server 直接依赖 plugins 包。
+type PluginDispatcher interface {
+	// Dispatch 分发一次钩子给所有已启用且订阅该钩子的插件，
+	// 返回实际执行的插件名列表。
+	Dispatch(hook string, logf func(format string, args ...any)) []string
 }
 
 // 防重放参数。
@@ -45,8 +54,9 @@ const (
 // Start 在 0.0.0.0:cfg.Port 上启动控制服务并返回。
 // 同一端口同时服务 HTTPS 与明文 HTTP（明文自动 302 重定向到 https）。
 // 监听端口占用时重试（重启流程中旧进程可能尚未完全释放端口）。
-func Start(store *devices.Store, backend control.Backend, cfg config.Config) (*http.Server, error) {
-	c := &Control{store: store, backend: backend}
+// plugins 为插件分发器（可 nil：无插件时行为不变）。
+func Start(store *devices.Store, backend control.Backend, plugins PluginDispatcher, cfg config.Config) (*http.Server, error) {
+	c := &Control{store: store, backend: backend, plugins: plugins}
 
 	certFile, keyFile, err := EnsureCert(cfg.DataDir)
 	if err != nil {

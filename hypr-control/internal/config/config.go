@@ -52,5 +52,8 @@ func (c Config) DevicesFile() string { return filepath.Join(c.DataDir, DevicesFi
 // AdminFile 返回管理通道信息文件路径（地址 + secret）。
 func (c Config) AdminFile() string { return filepath.Join(c.DataDir, AdminFileName) }
 
+// PluginsFile 返回插件启用状态文件路径。
+func (c Config) PluginsFile() string { return filepath.Join(c.DataDir, PluginsFileName) }
+
 // EnsureDataDir 确保数据目录存在（权限 0700）。
 func (c Config) EnsureDataDir() error { return os.MkdirAll(c.DataDir, 0o700) }

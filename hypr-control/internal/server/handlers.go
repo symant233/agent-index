@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -144,13 +145,13 @@ func (c *Control) handleKeys(w http.ResponseWriter, r *http.Request) {
 //	scroll   滚轮     {"delta":±120}
 func (c *Control) handleMouse(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Action string  `json:"action"`
-		DX     int32   `json:"dx"`
-		DY     int32   `json:"dy"`
-		X      int     `json:"x"`
-		Y      int     `json:"y"`
-		Button string  `json:"button"`
-		Delta  int32   `json:"delta"`
+		Action string `json:"action"`
+		DX     int32  `json:"dx"`
+		DY     int32  `json:"dy"`
+		X      int    `json:"x"`
+		Y      int    `json:"y"`
+		Button string `json:"button"`
+		Delta  int32  `json:"delta"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -248,6 +249,10 @@ func (c *Control) handleLock(w http.ResponseWriter, _ *http.Request) {
 // handlePower 电源操作：{"action":"shutdown|restart"}（立即执行，不可取消）。
 // 危险操作：必须携带确认头 X-Hypr-Confirm（值与 action 一致），防止
 // token 被截获/误触时直接关停主机。
+//
+// 执行顺序：先分发插件 shutdown 钩子（如 shutdown-volume 插件降音量），
+// 再下发系统关机/重启——保证插件动作赶在蓝牙音频断开之前完成。
+// 系统级关机（不经本接口）由 RunServer 的广播监听另行覆盖。
 func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action string `json:"action"`
@@ -263,6 +268,7 @@ func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "危险操作需确认头 X-Hypr-Confirm: "+body.Action)
 		return
 	}
+	c.dispatchShutdownHooks()
 	var err error
 	switch body.Action {
 	case "shutdown":
@@ -275,4 +281,15 @@ func (c *Control) handlePower(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": body.Action})
+}
+
+// dispatchShutdownHooks 分发插件 shutdown 钩子（同步执行，插件内部
+// 带恢复保护）。插件未启用或机制不可用时为空操作。
+func (c *Control) dispatchShutdownHooks() {
+	if c.plugins == nil {
+		return
+	}
+	c.plugins.Dispatch("shutdown", func(format string, args ...any) {
+		log.Printf("[plugin] "+format, args...)
+	})
 }
