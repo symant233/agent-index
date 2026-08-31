@@ -19,7 +19,11 @@ hypr-control/
 │   ├── win32/            # user32.dll/COM syscall 封装（键盘/鼠标/锁屏/音量/媒体/关机广播监听）
 │   ├── control/          # Backend 接口 + 真实 Windows 实现（测试可替换 mock）
 │   ├── devices/          # 设备表：JSON 持久化、PIN 配对、token 签发
-│   ├── plugins/          # 插件机制：钩子分发、启停持久化、内置插件
+│   ├── plugins/          # 插件机制：钩子分发、启停持久化（每插件一个文件）
+│   │   ├── plugins.go            # Plugin 接口 + Manager 钩子分发
+│   │   ├── store.go              # 启停状态 JSON 持久化
+│   │   ├── registry.go           # 内置插件清单（新增插件在此登记一行）
+│   │   └── plugin_*.go           # 各插件实现（一插件一文件）
 │   ├── admin/            # 本机管理通道（127.0.0.1 随机端口 + secret）+ CLI 客户端
 │   └── server/           # 局域网控制 HTTP 服务 + go:embed 前端
 │       └── web/          # 前端（纯 HTML/CSS/JS，无构建）
@@ -69,8 +73,22 @@ hctrl plugins enable shutdown-volume
 #      系统开始关机的瞬间才降到 20%（赶在蓝牙断开前）；shutdown /a 可取消关机
 ```
 
-> 音量目标是编译期常量（`internal/plugins/builtin.go` 的 `DefaultTargetPercent`）；
+> 音量目标是编译期常量（`internal/plugins/plugin_shutdownvolume.go` 的 `DefaultTargetPercent`）；
 > 广播应答有约 5 秒系统预算，插件内含 1.5 秒超时保护，不会拖慢关机。
+
+### 新增一个插件
+
+每个插件一个文件，机制与实现分离。以新增 `my-plugin` 为例：
+
+1. 新建 `internal/plugins/plugin_myplugin.go`，实现 `Plugin` 接口四件套：
+   `Name()`（唯一键，发布后不可改）、`Desc()`、`Hooks()`、`OnHook()`；
+2. 在 `internal/plugins/registry.go` 的 `NewBuiltins()` 中追加一行
+   `NewMyPlugin(),`；
+3. 运行 `go test ./internal/plugins/ -count=1`——`TestRegisterBuiltins`
+   会自动校验注册、命名唯一、钩子声明与"初始禁用"语义。
+
+无需改动机制代码、CLI 或管理 API：`hctrl plugins list` 自动可见，
+启停状态随名称持久化到 `plugins.json`。
 
 
 ## 构建
