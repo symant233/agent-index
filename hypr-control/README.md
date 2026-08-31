@@ -16,9 +16,10 @@ hypr-control/
 ├── cmd/hctrl/            # 入口：server 子命令 + 管理 CLI 子命令
 ├── internal/
 │   ├── config/           # 配置（端口 8080、数据目录 %LOCALAPPDATA%\hypr-control）
-│   ├── win32/            # user32.dll syscall 封装（键盘/鼠标/锁屏/音量/媒体）
+│   ├── win32/            # user32.dll/COM syscall 封装（键盘/鼠标/锁屏/音量/媒体/关机广播监听）
 │   ├── control/          # Backend 接口 + 真实 Windows 实现（测试可替换 mock）
 │   ├── devices/          # 设备表：JSON 持久化、PIN 配对、token 签发
+│   ├── plugins/          # 插件机制：钩子分发、启停持久化、内置插件
 │   ├── admin/            # 本机管理通道（127.0.0.1 随机端口 + secret）+ CLI 客户端
 │   └── server/           # 局域网控制 HTTP 服务 + go:embed 前端
 │       └── web/          # 前端（纯 HTML/CSS/JS，无构建）
@@ -27,6 +28,50 @@ hypr-control/
 │           └── js/       # api.js / pair.js / mousepad.js / remote.js / app.js
 └── build.ps1             # 构建脚本
 ```
+
+## 插件机制
+
+插件是编译进二进制的钩子单元（无需外部动态库），可在**系统关机/重启事件**
+或**网页电源操作**时被触发。所有插件**初始为禁用状态**，启用状态持久化在
+数据目录 `plugins.json`。
+
+### CLI 命令
+
+```powershell
+hctrl plugins list                     # 列出全部插件及状态
+hctrl plugins enable shutdown-volume   # 启用插件
+hctrl plugins disable shutdown-volume  # 禁用插件
+```
+
+### 内置插件：shutdown-volume（蓝牙音箱断连静音保护）
+
+**痛点**：蓝牙音箱连接的电脑关机时，蓝牙链路断开瞬间音箱会以**当前音量**
+外放"蓝牙已断开"提示音——如果关机前音量很大，深夜会吵到家人/邻居。
+
+**原理**：Windows 在关机/重启前向所有顶层窗口广播 `WM_QUERYENDSESSION`，
+此时蓝牙音频链路尚未断开。服务端以隐藏窗口监听该广播，在收到事件的
+第一时间（毫秒级）通过 Core Audio COM（`IAudioEndpointVolume`）把系统
+主音量降到 20%，随后才应答系统继续关机流程——音箱断连提示音自然变小。
+
+**覆盖的关机来源**（双保险）：
+- 系统级：开始菜单关机、`shutdown /s`、其他软件发起的关机/重启
+  （由服务端的 `WM_QUERYENDSESSION` 广播监听捕获）；
+- 网页遥控：`POST /api/control/power` 在下发系统关机命令前先执行插件钩子。
+
+**启用**（默认禁用，需手动开启）：
+
+```powershell
+hctrl plugins enable shutdown-volume
+# 验证：
+#   1. 把系统音量调大（如 80%）
+#   2. 执行 shutdown /s /t 30（30 秒倒计时后系统才真正开始关机）
+#   3. 注意：倒计时阶段不广播 WM_QUERYENDSESSION，音量在倒计时结束、
+#      系统开始关机的瞬间才降到 20%（赶在蓝牙断开前）；shutdown /a 可取消关机
+```
+
+> 音量目标是编译期常量（`internal/plugins/builtin.go` 的 `DefaultTargetPercent`）；
+> 广播应答有约 5 秒系统预算，插件内含 1.5 秒超时保护，不会拖慢关机。
+
 
 ## 构建
 
@@ -92,6 +137,9 @@ hctrl kill                        # 优雅停止
 | `hctrl devices allow <PIN>` | 按 PIN 授权设备 |
 | `hctrl devices deny <ID\|PIN>` | 拒绝待授权设备 |
 | `hctrl devices revoke <ID>` | 吊销已授权设备 |
+| `hctrl plugins list` | 列出全部插件及启停状态（初始均禁用） |
+| `hctrl plugins enable <名称>` | 启用插件（如 `shutdown-volume`） |
+| `hctrl plugins disable <名称>` | 禁用插件 |
 | `hctrl autostart enable\|disable\|status` | 注册/移除/查看开机自启动（HKCU Run） |
 
 ## 控制 API（网页内部使用）
@@ -105,7 +153,7 @@ hctrl kill                        # 优雅停止
 | `POST /api/control/volume` | `{"action":"up\|down\|mute"}` | 系统音量 |
 | `POST /api/control/media` | `{"action":"playpause\|next\|prev\|stop"}` | 媒体控制 |
 | `POST /api/control/lock` | `{}` | 锁屏 |
-| `POST /api/control/power` | `{"action":"shutdown\|restart"}` + 头 `X-Hypr-Confirm` | 立即关机/重启（需确认头） |
+| `POST /api/control/power` | `{"action":"shutdown\|restart"}` + 头 `X-Hypr-Confirm` | 立即关机/重启（需确认头）；执行前先分发插件 `shutdown` 钩子 |
 
 控制请求需携带已授权设备的令牌：`Authorization: Bearer <token>`（token 在设备授权后由 `/api/pair` 返回）。
 
@@ -114,6 +162,14 @@ hctrl kill                        # 优雅停止
 - `X-Hypr-Nonce`：一次性随机标识（16-128 字符），重复使用即拒绝
 
 > 关机/重启（`/api/control/power`）额外要求确认头 `X-Hypr-Confirm`（值须与 action 一致），防止 token 被截获时直接关停主机。
+
+## 管理 API（本机 CLI 专用）
+
+| 端点 | 请求体 | 说明 |
+| --- | --- | --- |
+| `GET /api/admin/plugins` | — | 列出全部插件及启停状态 |
+| `POST /api/admin/plugins/enable` | `{"name":"shutdown-volume"}` | 启用插件并持久化 |
+| `POST /api/admin/plugins/disable` | `{"name":"shutdown-volume"}` | 禁用插件并持久化 |
 
 ## 安全说明
 
