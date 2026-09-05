@@ -297,3 +297,80 @@ func (c *Control) dispatchShutdownHooks() {
 		log.Printf("[plugin] "+format, args...)
 	})
 }
+
+// clipboardTextLimit 限制剪贴板传输文本大小，防止异常请求撑爆内存。
+const clipboardTextLimit = 64 << 10 // 64KB
+
+// handleClipboard 剪贴板同步，action 取值：
+//
+//	get  读取主机剪贴板 {"text": "..."}（空/非文本时 text 为 ""）
+//	set  写入主机剪贴板 {"text": "..."}
+func (c *Control) handleClipboard(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action string `json:"action"`
+		Text   string `json:"text"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	switch body.Action {
+	case "get":
+		text, err := c.backend.ClipboardGet()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "get", "text": text})
+	case "set":
+		if body.Text == "" {
+			writeErr(w, http.StatusBadRequest, "缺少 text")
+			return
+		}
+		if len(body.Text) > clipboardTextLimit {
+			writeErr(w, http.StatusBadRequest, "文本过长（上限 64KB）")
+			return
+		}
+		if err := c.backend.ClipboardSet(body.Text); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "set"})
+	default:
+		writeErr(w, http.StatusBadRequest, "未知剪贴板动作: "+body.Action)
+	}
+}
+
+// handleWindows 窗口切换器，action 取值：
+//
+//	list   可切换窗口列表（Z 序，前台在前，含激活标记）
+//	focus  激活指定窗口 {"handle": <ListWindows 返回的句柄>}
+func (c *Control) handleWindows(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action string `json:"action"`
+		Handle uint64 `json:"handle"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	switch body.Action {
+	case "list":
+		ws, err := c.backend.ListWindows()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": "list", "windows": ws})
+	case "focus":
+		if body.Handle == 0 {
+			writeErr(w, http.StatusBadRequest, "缺少 handle")
+			return
+		}
+		if err := c.backend.FocusWindow(body.Handle); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "focus"})
+	default:
+		writeErr(w, http.StatusBadRequest, "未知窗口动作: "+body.Action)
+	}
+}

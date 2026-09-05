@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"hypr-control/internal/config"
+	"hypr-control/internal/control"
 	"hypr-control/internal/devices"
 )
 
@@ -98,6 +99,26 @@ func (m *mockBackend) MediaPlayPause() error          { m.record("media:playpaus
 func (m *mockBackend) MediaNext() error               { m.record("media:next"); return nil }
 func (m *mockBackend) MediaPrev() error               { m.record("media:prev"); return nil }
 func (m *mockBackend) MediaStop() error               { m.record("media:stop"); return nil }
+
+func (m *mockBackend) ClipboardGet() (string, error) {
+	m.record("clipboard:get")
+	return "剪贴板内容", nil
+}
+func (m *mockBackend) ClipboardSet(text string) error {
+	m.record("clipboard:set")
+	return nil
+}
+func (m *mockBackend) ListWindows() ([]control.WindowInfo, error) {
+	m.record("windows:list")
+	return []control.WindowInfo{
+		{Handle: 111, Title: "前台窗口", Active: true},
+		{Handle: 222, Title: "后台窗口", Active: false},
+	}, nil
+}
+func (m *mockBackend) FocusWindow(handle uint64) error {
+	m.record(fmt.Sprintf("windows:focus:%d", handle))
+	return nil
+}
 
 // newTestServer 构造带 mock 后端与真实设备存储的测试服务。
 func newTestServer(t *testing.T) (*httptest.Server, *mockBackend, *devices.Store, string) {
@@ -253,6 +274,8 @@ func TestControlEndpoints(t *testing.T) {
 		{"/api/control/volume", `{"action":"mute"}`, "volume:mute"},
 		{"/api/control/media", `{"action":"next"}`, "media:next"},
 		{"/api/control/media", `{"action":"playpause"}`, "media:playpause"},
+		{"/api/control/clipboard", `{"action":"set","text":"hello"}`, "clipboard:set"},
+		{"/api/control/windows", `{"action":"focus","handle":123}`, "windows:focus:123"},
 	}
 	for _, tc := range cases {
 		mock.mu.Lock()
@@ -519,5 +542,73 @@ func TestPowerNoPluginsStillWorks(t *testing.T) {
 	mock.mu.Unlock()
 	if last != "power:shutdown" {
 		t.Fatalf("无插件时 power 调用 = %s", last)
+	}
+}
+
+// TestClipboardAndWindows 覆盖剪贴板读取与窗口列表的响应内容，
+// 以及两个新端点的参数校验分支。
+func TestClipboardAndWindows(t *testing.T) {
+	ts, mock, store, _ := newTestServer(t)
+
+	resp := doJSON(t, http.MethodPost, ts.URL+"/api/pair", "", `{"device_id":"dev-clip","name":"测试"}`)
+	var out struct {
+		Device struct {
+			PIN string `json:"pin"`
+		} `json:"device"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	token := authorizeDevice(t, store, out.Device.PIN)
+
+	// clipboard get：返回 mock 中的文本
+	mock.mu.Lock()
+	before := len(mock.calls)
+	mock.mu.Unlock()
+	r := doJSON(t, http.MethodPost, ts.URL+"/api/control/clipboard", token, `{"action":"get"}`)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("clipboard get 状态 = %d, body=%s", r.StatusCode, readBody(r))
+	}
+	var got struct {
+		Text string `json:"text"`
+	}
+	json.NewDecoder(r.Body).Decode(&got)
+	r.Body.Close()
+	if got.Text != "剪贴板内容" {
+		t.Fatalf("clipboard get text = %q", got.Text)
+	}
+	mock.mu.Lock()
+	calls := mock.calls[before:]
+	mock.mu.Unlock()
+	if len(calls) != 1 || calls[0] != "clipboard:get" {
+		t.Fatalf("clipboard get mock 调用 = %v", calls)
+	}
+
+	// windows list：返回窗口数组与激活标记
+	r = doJSON(t, http.MethodPost, ts.URL+"/api/control/windows", token, `{"action":"list"}`)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("windows list 状态 = %d", r.StatusCode)
+	}
+	var wl struct {
+		Windows []control.WindowInfo `json:"windows"`
+	}
+	json.NewDecoder(r.Body).Decode(&wl)
+	r.Body.Close()
+	if len(wl.Windows) != 2 || wl.Windows[0].Handle != 111 ||
+		!wl.Windows[0].Active || wl.Windows[1].Active {
+		t.Fatalf("windows list = %+v", wl.Windows)
+	}
+
+	// 参数校验：未知 action / set 缺 text / focus 缺 handle
+	for _, tc := range []struct{ path, body string }{
+		{"/api/control/clipboard", `{"action":"boom"}`},
+		{"/api/control/clipboard", `{"action":"set"}`},
+		{"/api/control/windows", `{"action":"boom"}`},
+		{"/api/control/windows", `{"action":"focus"}`},
+	} {
+		r := doJSON(t, http.MethodPost, ts.URL+tc.path, token, tc.body)
+		if r.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s %s 应 400, got %d", tc.path, tc.body, r.StatusCode)
+		}
+		r.Body.Close()
 	}
 }

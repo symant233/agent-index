@@ -55,6 +55,19 @@ const (
 	VKMediaPrev      = 0xB1
 	VKMediaStop      = 0xB2
 	VKMediaPlayPause = 0xB3
+
+	// OEM 符号键（US 键盘布局）
+	VKOemSemicolon     = 0xBA // ; :
+	VKOemPlus          = 0xBB // = +
+	VKOemComma         = 0xBC // , <
+	VKOemMinus         = 0xBD // - _
+	VKOemPeriod        = 0xBE // . >
+	VKOemQuestion      = 0xBF // / ?
+	VKOemTilde         = 0xC0 // ` ~
+	VKOemOpenBrackets  = 0xDB // [ {
+	VKOemPipe          = 0xDC // \ |
+	VKOemCloseBrackets = 0xDD // ] }
+	VKOemQuotes        = 0xDE // ' "
 )
 
 // VKF1..VKF24 与 VKNumpad0..9 由 keyVK 中直接计算，不在此列出。

@@ -5,7 +5,7 @@ const (
 	// Version 是程序版本号（语义化版本）。每次发版递增：
 	// 破坏性/行为变更升次版本（1.1.0），修复与微调升修订号（1.0.1）。
 	// 通过 /api/pair 下发给网页顶栏展示，hctrl status 也会显示。
-	Version = "1.0.0"
+	Version = "1.1.0"
 
 	// DefaultPort 是局域网控制 HTTP 默认端口。
 	// 注意：不要使用 6000-6009（X11），浏览器会以 ERR_UNSAFE_PORT 拒绝访问。

@@ -21,6 +21,7 @@
     Pair.show('view-remote');
     Remote.init();
     Mousepad.init();
+    Keyboard.init();
     const el = document.getElementById('status-text');
     el.textContent = '已连接：' + location.hostname + '（' + location.port + '）';
   }

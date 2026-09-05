@@ -49,6 +49,9 @@
         <div class="mousepad-label">拖动移动 · 点按左键 · 滚轮滚动<br>长按或双指右键 · 三指中键 · 双击后拖动</div>
       </div>
       <div class="mousepad-actions">
+        <button id="btn-windows" class="ctl" title="窗口切换（类似 Alt+Tab）">窗口</button>
+        <button class="ctl" data-key="tab" title="Tab 键">Tab</button>
+        <button id="btn-keyboard" class="ctl" title="虚拟键盘">⌨ 键盘</button>
         <button id="btn-mbtn" class="ctl" title="中键">中键</button>
         <button id="btn-rbtn" class="ctl" title="右键">右键</button>
       </div>
@@ -68,6 +71,13 @@
       <button class="ctl" data-key="esc" title="退出">退出</button>
     </div>
 
+    <!-- 剪贴板同步：拷贝=电脑→手机，粘贴=手机→电脑 -->
+    <div class="row">
+      <span class="label">传输</span>
+      <button class="ctl" id="btn-clip-pull" title="复制电脑最新剪贴板内容到手机">拷贝</button>
+      <button class="ctl" id="btn-clip-push" title="把手机剪贴板内容发送到电脑">粘贴</button>
+    </div>
+
     <!-- 音量与媒体 -->
     <div class="row">
       <span class="label">音量</span>
@@ -83,25 +93,50 @@
       <button class="ctl" data-media="stop">⏹</button>
     </div>
 
-    <!-- 常用快捷键 -->
-    <div class="row shortcuts">
-      <button class="ctl" data-chord='["win","d"]'>Win+D</button>
-      <button class="ctl" data-chord='["ctrl","shift","esc"]'>任务管理器</button>
-      <button class="ctl" data-chord='["win","l"]'>Win+L</button>
-      <button class="ctl" data-key="f5">刷新</button>
-    </div>
-
     <footer class="statusbar"><span id="status-text"></span></footer>
   </section>
 
-  <!-- 更多面板：不常用功能（锁屏/关机/重启） -->
+  <!-- 更多面板：不常用功能（锁屏/返回桌面/任务管理器/关机/重启） -->
   <div id="more-panel" class="more-panel hidden">
     <div class="more-card">
       <h2>更多</h2>
       <button id="btn-lock" class="ctl">🔒 锁屏</button>
+      <button class="ctl" data-chord='["win","d"]'>🖥 返回桌面</button>
+      <button class="ctl" data-chord='["ctrl","shift","esc"]'>📊 任务管理器</button>
       <button id="btn-restart" class="ctl">🔄 重启</button>
       <button id="btn-shutdown" class="ctl danger-btn">🔴 关机</button>
       <button id="btn-more-close" class="ctl">关闭</button>
+    </div>
+  </div>
+
+  <!-- 窗口切换器：居中弹出，列出可切换窗口（类似 Alt+Tab） -->
+  <div id="window-panel" class="more-panel win-panel hidden">
+    <div class="more-card window-card">
+      <h2>窗口切换</h2>
+      <div id="window-list" class="window-list"></div>
+      <button id="btn-window-close" class="ctl">关闭</button>
+    </div>
+  </div>
+
+  <!-- 虚拟键盘：点按直接映射主机按键，不走手机输入法 -->
+  <div id="keyboard-panel" class="more-panel kb-panel hidden">
+    <div class="more-card kb-card">
+      <div class="kb-head">
+        <h2>虚拟键盘</h2>
+        <button id="btn-keyboard-close" class="ghost">关闭</button>
+      </div>
+      <div id="kb-rows" class="kb-rows"></div>
+    </div>
+  </div>
+
+  <!-- 剪贴板降级面板：浏览器剪贴板 API 不可用时的手动中转 -->
+  <div id="clip-panel" class="more-panel win-panel hidden">
+    <div class="more-card">
+      <h2 id="clip-title">剪贴板</h2>
+      <p class="sub-hint" id="clip-hint"></p>
+      <textarea id="clip-text" class="clip-text" rows="6"></textarea>
+      <button id="btn-clip-send" class="ctl">发送到电脑</button>
+      <button id="btn-clip-close" class="ctl">关闭</button>
     </div>
   </div>
 
@@ -109,6 +144,7 @@
   <script src="js/pair.js"></script>
   <script src="js/mousepad.js"></script>
   <script src="js/remote.js"></script>
+  <script src="js/keyboard.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

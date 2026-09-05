@@ -120,6 +120,8 @@ func (c *Control) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/control/media", c.auth(c.handleMedia))
 	mux.HandleFunc("POST /api/control/lock", c.auth(c.handleLock))
 	mux.HandleFunc("POST /api/control/power", c.auth(c.handlePower))
+	mux.HandleFunc("POST /api/control/clipboard", c.auth(c.handleClipboard))
+	mux.HandleFunc("POST /api/control/windows", c.auth(c.handleWindows))
 	return mux
 }
 

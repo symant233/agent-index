@@ -6,6 +6,8 @@
 
 - **网页控制（P0）**：局域网设备访问 `http://<主机IP>:8080` 打开遥控器网页（自动重定向到 HTTPS；首次访问需在主机上经 CLI 授权）。
 - **传输安全**：控制通道使用 HTTPS（自签名证书）+ 时间戳/nonce 防重放；http 明文请求自动 301 到 https。
+- **文字与剪贴板（v1.1）**：虚拟键盘点按直接映射主机按键（不走手机输入法）；剪贴板双向同步（拷贝=电脑→手机，粘贴=手机→电脑），中文输入走"复制→粘贴"通路。
+- **窗口切换器（v1.1）**：居中面板列出可切换窗口（类似 Alt+Tab，按 Z 序、标注当前激活项），点击即激活。
 - **REST 控制（P2）**：暂不提供对第三方的公开 REST 通道；控制 API 仅供网页内部使用。
 - **仅支持 Windows**：通过 `user32.dll`（`SendInput` / `SetCursorPos` / `LockWorkStation` / `WM_APPCOMMAND`）实现，零外部依赖、无 CGo。
 
@@ -16,7 +18,7 @@ hypr-control/
 ├── cmd/hctrl/            # 入口：server 子命令 + 管理 CLI 子命令
 ├── internal/
 │   ├── config/           # 配置（端口 8080、数据目录 %LOCALAPPDATA%\hypr-control）
-│   ├── win32/            # user32.dll/COM syscall 封装（键盘/鼠标/锁屏/音量/媒体/关机广播监听）
+│   ├── win32/            # user32.dll/COM syscall 封装（键盘/鼠标/锁屏/音量/媒体/关机广播监听/剪贴板/窗口）
 │   ├── control/          # Backend 接口 + 真实 Windows 实现（测试可替换 mock）
 │   ├── devices/          # 设备表：JSON 持久化、PIN 配对、token 签发
 │   ├── plugins/          # 插件机制：钩子分发、启停持久化（每插件一个文件）
@@ -29,7 +31,7 @@ hypr-control/
 │       └── web/          # 前端（纯 HTML/CSS/JS，无构建）
 │           ├── index.html
 │           ├── css/style.css
-│           └── js/       # api.js / pair.js / mousepad.js / remote.js / app.js
+│           └── js/       # api.js / pair.js / mousepad.js / remote.js / keyboard.js / app.js
 └── build.ps1             # 构建脚本
 ```
 
@@ -172,6 +174,8 @@ hctrl kill                        # 优雅停止
 | `POST /api/control/media` | `{"action":"playpause\|next\|prev\|stop"}` | 媒体控制 |
 | `POST /api/control/lock` | `{}` | 锁屏 |
 | `POST /api/control/power` | `{"action":"shutdown\|restart"}` + 头 `X-Hypr-Confirm` | 立即关机/重启（需确认头）；执行前先分发插件 `shutdown` 钩子 |
+| `POST /api/control/clipboard` | `{"action":"get\|set","text"}` | 剪贴板同步：`get` 读取主机剪贴板文本（空/非文本返回 ""），`set` 写入（≤64KB） |
+| `POST /api/control/windows` | `{"action":"list\|focus","handle"}` | 窗口切换：`list` 按窗口 Z 序返回 `[{handle,title,active}]`（过滤不可见/工具/外壳窗口），`focus` 激活指定窗口 |
 
 控制请求需携带已授权设备的令牌：`Authorization: Bearer <token>`（token 在设备授权后由 `/api/pair` 返回）。
 
@@ -196,6 +200,8 @@ hctrl kill                        # 优雅停止
 - **首访拦截**：未授权设备只能访问配对页与 `/api/pair`，无法调用任何控制接口。
 - **管理通道隔离**：CLI 经 `127.0.0.1` 随机端口 + 随机 secret（`%LOCALAPPDATA%\hypr-control\admin.json`）通信，不暴露到局域网。
 - **`Ctrl+Alt+Del` 无法模拟**：它是 Windows 安全注意序列，`SendInput` 不允许注入。
+- **窗口激活**：Windows 限制后台进程抢前台，服务端用 `AttachThreadInput` 临时附加前台线程绕过；全屏独占/提权窗口可能拒绝切换（会返回明确错误）。
+- **剪贴板**：仅支持文本（`CF_UNICODETEXT`）；手机端浏览器剪贴板 API 在自签名证书下可能不可用，网页自动降级为 textarea 手动中转。
 - **令牌吊销**：`hctrl devices revoke` 后该设备 token 立即失效。
 - **同机用户**：同机其他用户进程可读取 `admin.json`（与"同机用户本就有完全控制权"的风险级别一致）。
 - 建议在可信局域网使用；如需公网暴露请另行加固（如 VPN / 反向代理 + TLS）。
