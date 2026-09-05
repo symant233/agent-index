@@ -56,6 +56,15 @@ html, body {
 .logo { font-size: 26px; margin: 0 0 16px; letter-spacing: 1px; }
 .logo span { color: var(--accent); }
 .logo.small { font-size: 16px; margin: 0; }
+/* 顶栏版本号：比 logo 更浅更小，低调展示 */
+.logo .version {
+  color: #5f6879;
+  font-size: 10px;
+  font-weight: normal;
+  letter-spacing: 0;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
 .hint { color: var(--muted); font-size: 14px; line-height: 1.6; }
 .sub-hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .cmd {

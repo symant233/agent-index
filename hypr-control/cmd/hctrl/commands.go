@@ -118,8 +118,8 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("状态: %s\n监听: %s\n管理通道: %s\n运行时长: %s\n",
-		st.State, st.ListenAddr, st.AdminAddr, st.Uptime.Round(time.Second))
+	fmt.Printf("版本: v%s\n状态: %s\n监听: %s\n管理通道: %s\n运行时长: %s\n",
+		config.Version, st.State, st.ListenAddr, st.AdminAddr, st.Uptime.Round(time.Second))
 	if enabled, cmd, err := autostart.Status(); err == nil {
 		if enabled {
 			fmt.Printf("开机自启动: 已注册（%s）\n", cmd)

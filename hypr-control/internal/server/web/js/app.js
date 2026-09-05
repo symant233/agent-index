@@ -10,6 +10,13 @@
     }
   };
 
+  // showVersion 把服务端下发的版本号写入顶栏（服务端 config.Version 为唯一来源）
+  function showVersion(data) {
+    if (!data || !data.version) return;
+    const el = document.getElementById('app-version');
+    if (el) el.textContent = 'v' + data.version;
+  }
+
   function showRemote() {
     Pair.show('view-remote');
     Remote.init();
@@ -29,6 +36,7 @@
       }
       if (d.status === 'authorized') {
         Api.saveToken(d.device.token);
+        showVersion(d);
         showRemote();
         return;
       }
@@ -54,6 +62,7 @@
       return;
     }
 
+    showVersion(data);
     if (data.status === 'authorized') {
       Api.saveToken(data.device.token);
       showRemote();

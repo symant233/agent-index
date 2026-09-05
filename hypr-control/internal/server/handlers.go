@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"hypr-control/internal/config"
 	"hypr-control/internal/devices"
 )
 
@@ -62,18 +63,21 @@ func (c *Control) handlePair(w http.ResponseWriter, r *http.Request) {
 	switch d.Status {
 	case devices.StatusAuthorized:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "authorized",
-			"device": d,
+			"status":  "authorized",
+			"version": config.Version,
+			"device":  d,
 		})
 	case devices.StatusPending:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "pending",
-			"device": d,
+			"status":  "pending",
+			"version": config.Version,
+			"device":  d,
 		})
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": d.Status,
-			"device": d,
+			"status":  d.Status,
+			"version": config.Version,
+			"device":  d,
 		})
 	}
 }

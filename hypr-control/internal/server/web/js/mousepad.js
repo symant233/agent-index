@@ -8,7 +8,8 @@
 const Mousepad = (() => {
   const THROTTLE_MS = 12;   // 位移发送节流
   const BASE_SPEED = 0.5;   // 基准速度 px/ms（1 倍）
-  const MIN_FACTOR = 0.5;   // 最慢时的位移缩放
+  const MIN_FACTOR = 1.0;   // 最慢时的位移缩放：低速 1:1（CSS px → 光标 px），
+                            // 保证慢移足够远；不再向下压缩（原 0.5 会把慢移减半）
   const MAX_FACTOR = 4.0;   // 最快时的位移缩放
 
   const DBL_TAP_MS = 250;   // 双击窗口；同时是单击延迟确认时长：
@@ -48,11 +49,14 @@ const Mousepad = (() => {
     Api.control('/api/control/mouse', body).catch(window.__hctrlError || console.error);
   }
 
+  // flushAcc 把累计位移取整发送，小数余量保留到下一窗口：
+  // 慢速移动时每个节流窗口只积累零点几像素，直接清零会系统性丢步，
+  // 表现为"手指挪了很多、光标没怎么动"。
   function flushAcc() {
-    if (accX !== 0 || accY !== 0) {
-      send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
-    }
-    accX = accY = 0;
+    const dx = Math.round(accX), dy = Math.round(accY);
+    if (dx !== 0 || dy !== 0) send({ action: 'move', dx, dy });
+    accX -= dx;
+    accY -= dy;
   }
 
   function cancelHold() {
@@ -108,8 +112,7 @@ const Mousepad = (() => {
     const t = Date.now();
     if (t - lastSent < THROTTLE_MS) return;
     lastSent = t;
-    send({ action: 'move', dx: Math.round(accX), dy: Math.round(accY) });
-    accX = accY = 0;
+    flushAcc();
   }
 
   // ---- pointer 事件 ----
