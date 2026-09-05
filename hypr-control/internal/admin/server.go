@@ -322,11 +322,12 @@ func RunServer(cfg config.Config) error {
 	}
 
 	// 插件机制：全部初始禁用，启停状态持久化在数据目录 plugins.json。
+	// 内置插件清单见 plugins/registry.go（每个插件一个 plugin_*.go 文件）。
 	mgr, err := plugins.NewManager(plugins.NewFileStore(cfg.PluginsFile()))
 	if err != nil {
 		return fmt.Errorf("插件状态加载失败: %w", err)
 	}
-	if err := mgr.Register(plugins.NewShutdownVolume()); err != nil {
+	if err := plugins.RegisterBuiltins(mgr); err != nil {
 		return fmt.Errorf("内置插件注册失败: %w", err)
 	}
 

@@ -251,3 +251,41 @@ func TestLogfNilSafe(t *testing.T) {
 	ctx := &Context{}
 	ctx.Logf("no panic %d", 1)
 }
+
+// TestRegisterBuiltins 验证内置插件清单注册：全部成功、无重名。
+// 新增插件文件后本测试自动覆盖其注册正确性。
+func TestRegisterBuiltins(t *testing.T) {
+	m, _ := newTestManager(t)
+	if err := RegisterBuiltins(m); err != nil {
+		t.Fatalf("内置插件注册失败: %v", err)
+	}
+	list := m.List()
+	if len(list) == 0 {
+		t.Fatal("内置插件清单为空（registry.go 的 NewBuiltins 未登记任何插件？）")
+	}
+	seen := map[string]bool{}
+	for _, p := range list {
+		if p.Name == "" {
+			t.Fatal("存在空名称插件")
+		}
+		if seen[p.Name] {
+			t.Fatalf("插件重名: %s", p.Name)
+		}
+		seen[p.Name] = true
+		// 每个插件必须声明至少一个钩子，且描述非空（CLI 展示用）
+		if len(p.Hooks) == 0 {
+			t.Fatalf("插件 %s 未声明任何钩子", p.Name)
+		}
+		if p.Desc == "" {
+			t.Fatalf("插件 %s 缺少描述", p.Name)
+		}
+		// 注册后初始必须为禁用（核心语义，防新插件意外默认开启）
+		if p.Enabled {
+			t.Fatalf("插件 %s 初始状态应为禁用", p.Name)
+		}
+	}
+	// shutdown-volume 必须在内置清单中
+	if !seen[NameShutdownVolume] {
+		t.Fatalf("内置插件 %s 未登记", NameShutdownVolume)
+	}
+}
