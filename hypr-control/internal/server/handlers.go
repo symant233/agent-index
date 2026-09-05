@@ -174,6 +174,8 @@ func (c *Control) handleMouse(w http.ResponseWriter, r *http.Request) {
 		err = c.backend.MouseUp(body.Button)
 	case "scroll":
 		err = c.backend.MouseScroll(body.Delta)
+	case "hscroll":
+		err = c.backend.MouseHScroll(body.Delta)
 	default:
 		writeErr(w, http.StatusBadRequest, "未知鼠标动作: "+body.Action)
 		return

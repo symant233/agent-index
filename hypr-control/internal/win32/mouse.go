@@ -15,6 +15,7 @@ const (
 	mouseEventMiddleDown = 0x0020
 	mouseEventMiddleUp   = 0x0040
 	mouseEventWheel      = 0x0800
+	mouseEventHWheel     = 0x1000
 	mouseEventAbsolute   = 0x8000
 )
 
@@ -79,6 +80,11 @@ func MouseUp(button string) error {
 // MouseScroll 滚动滚轮。delta 为正向上、负向下，建议 ±120。
 func MouseScroll(delta int32) error {
 	return sendInputs([][]byte{mouseInputRaw(0, 0, uint32(delta), mouseEventWheel)})
+}
+
+// MouseHScroll 水平滚动。delta 为正向右、负向左，建议 ±120。
+func MouseHScroll(delta int32) error {
+	return sendInputs([][]byte{mouseInputRaw(0, 0, uint32(delta), mouseEventHWheel)})
 }
 
 // GetCursorPos 读取当前指针位置（屏幕坐标）。

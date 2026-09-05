@@ -14,6 +14,7 @@ type Backend interface {
 	MouseMoveTo(x, y int) error      // 绝对定位
 	MouseClick(button string) error  // left / right / middle
 	MouseScroll(delta int32) error   // 滚轮，±120
+	MouseHScroll(delta int32) error  // 水平滚动，正右负左
 	MouseDown(button string) error   // 按下不释放（拖拽用，与 MouseUp 配对）
 	MouseUp(button string) error     // 释放（与 MouseDown 配对）
 	// 系统
@@ -54,6 +55,7 @@ func (winBackend) MouseMoveRel(dx, dy int32) error { return win32.MouseMoveRel(d
 func (winBackend) MouseMoveTo(x, y int) error      { return win32.MouseMoveTo(x, y) }
 func (winBackend) MouseClick(button string) error  { return win32.MouseClick(button) }
 func (winBackend) MouseScroll(delta int32) error   { return win32.MouseScroll(delta) }
+func (winBackend) MouseHScroll(delta int32) error  { return win32.MouseHScroll(delta) }
 func (winBackend) MouseDown(button string) error   { return win32.MouseDown(button) }
 func (winBackend) MouseUp(button string) error     { return win32.MouseUp(button) }
 func (winBackend) Lock() error                     { return win32.LockWorkstation() }

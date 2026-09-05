@@ -3,6 +3,7 @@
 //   单指滑动移动指针（速度感知缩放，无死区）· 单指点按=左键
 //   单指/双击第二下长按不动（~450ms）= 右键
 //   双击第二下按住并移动 = 拖拽（左键按下 + 同步移动，松手释放）
+//   双指滑动 = 垂直/水平滚动（按中点位移、主导轴判定）
 //   双指快速同按同抬 = 右键 · 三指快速同按同抬 = 中键
 //   滚轮滚动 · 右键/中键按钮仍可用
 const Mousepad = (() => {
@@ -11,6 +12,7 @@ const Mousepad = (() => {
   const MIN_FACTOR = 1.0;   // 最慢时的位移缩放：低速 1:1（CSS px → 光标 px），
                             // 保证慢移足够远；不再向下压缩（原 0.5 会把慢移减半）
   const MAX_FACTOR = 4.0;   // 最快时的位移缩放
+  const SCROLL_NOTCH_PX = 30; // 双指滚动：每 30px 中点位移发一格（±120）
 
   const DBL_TAP_MS = 250;   // 双击窗口；同时是单击延迟确认时长：
                             // 第一下 tap 挂起，窗口内无第二下按下才落地为单击
@@ -45,8 +47,19 @@ const Mousepad = (() => {
   let tapTimer = null;      // 挂起 tap 的落地定时器
   let dragArmWasSecond = false; // 本次 dragArm 是否来自双击第二下
 
+  // ---- 双指滚动状态 ----
+  let lastMid = null;       // 双指中点（上次事件位置；null=当前不在双指滚动）
+  let accSX = 0, accSY = 0; // 滚动累计位移（未满一格的余量保留）
+  let scrolled2 = false;    // 本轮双指手势已产生滚动（抑制松手时误触双指右键）
+
   function send(body) {
     Api.control('/api/control/mouse', body).catch(window.__hctrlError || console.error);
+  }
+
+  // twoMid 返回恰好两指时的中点位置。
+  function twoMid() {
+    const pts = [...pointers.values()];
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
   }
 
   // flushAcc 把累计位移取整发送，小数余量保留到下一窗口：
@@ -129,6 +142,7 @@ const Mousepad = (() => {
       multiGauge = null;
       multiTouched = false;
       lastMoveT = 0; smoothSpeed = 0;
+      lastMid = null; accSX = 0; accSY = 0; scrolled2 = false;
       const now = performance.now();
       const inDblWindow = now - lastTapUp < DBL_TAP_MS && now - lastDragEnd >= DBL_TAP_MS;
       if (inDblWindow && tapPending) {
@@ -148,6 +162,7 @@ const Mousepad = (() => {
     cancelHold();
     cancelTap(); // 多指手势丢弃挂起的第一下（不补发）
     flushAcc();
+    lastMid = null; accSX = 0; accSY = 0; scrolled2 = false; // 滚动状态从头累计
     multiTouched = true;
     if (!multiFired) {
       if (!multiGauge) multiGauge = { count: pointers.size, downT: performance.now() };
@@ -164,8 +179,26 @@ const Mousepad = (() => {
     p.x = e.clientX; p.y = e.clientY;
 
     if (pointers.size > 1) {
-      // 多指：只累计位移用于判定，不移动指针
       totalMove += Math.hypot(dx, dy);
+      if (pointers.size !== 2) { lastMid = null; return; } // 三指及以上不滚动
+      // 双指滑动 = 滚动：取两指中点位移，按主导轴发垂直/水平滚轮
+      const m = twoMid();
+      if (lastMid) {
+        accSX += m.x - lastMid.x;
+        accSY += m.y - lastMid.y;
+      }
+      lastMid = m;
+      while (Math.abs(accSY) >= SCROLL_NOTCH_PX || Math.abs(accSX) >= SCROLL_NOTCH_PX) {
+        if (Math.abs(accSY) >= Math.abs(accSX)) {
+          // 与鼠标滚轮同手感（Windows 默认）：手指下滑 = 页面向下滚，delta 为负
+          send({ action: 'scroll', delta: accSY > 0 ? -120 : 120 });
+          accSY -= accSY > 0 ? SCROLL_NOTCH_PX : -SCROLL_NOTCH_PX;
+        } else {
+          send({ action: 'hscroll', delta: accSX > 0 ? 120 : -120 });
+          accSX -= accSX > 0 ? SCROLL_NOTCH_PX : -SCROLL_NOTCH_PX;
+        }
+        scrolled2 = true;
+      }
       return;
     }
     if (multiFired || holdFired) return; // 多指点按/长按右键后的残留移动不生效
@@ -205,6 +238,7 @@ const Mousepad = (() => {
       // （双指 tap 两根手指先后抬起，最后一根抬起时才判定）
       flushAcc();
       cancelHold();
+      lastMid = null; // 双指抬走一根：滚动结束
       return;
     }
 
@@ -222,11 +256,11 @@ const Mousepad = (() => {
     }
     dragArm = false;
 
-    // 多指手势判定：全部按下的时间窗内、位移小、指头数对 → 右键/中键
+    // 多指手势判定：全部按下的时间窗内、位移小、未滚动、指头数对 → 右键/中键
     if (multiGauge && !multiFired) {
       const dt = now - multiGauge.downT;
       const n = multiGauge.count;
-      if (dt <= MULTI_MS && totalMove < MULTI_MOVE_PX && (n === 2 || n === 3)) {
+      if (dt <= MULTI_MS && totalMove < MULTI_MOVE_PX && !scrolled2 && (n === 2 || n === 3)) {
         send({ action: 'click', button: n === 2 ? 'right' : 'middle' });
       }
       multiGauge = null;
@@ -256,6 +290,7 @@ const Mousepad = (() => {
     if (dragging) send({ action: 'up', button: 'left' });
     dragArm = false; dragging = false;
     multiGauge = null; multiFired = false;
+    lastMid = null; accSX = 0; accSY = 0; scrolled2 = false;
     if (pointers.size === 0) totalMove = 0;
   });
 
