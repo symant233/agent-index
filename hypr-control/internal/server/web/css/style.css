@@ -231,10 +231,11 @@ button.ctl.danger-btn:active { background: #4a2430; }
   max-height: 72vh;
   margin: 0 16px; /* 左右留边，不贴屏幕边缘 */
 }
+.window-card h2 { margin: 0; } /* 去掉标题默认下边距，间距统一走 gap */
 .window-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px; /* 与卡片 gap 一致，列表项与关闭按钮间距相同 */
   overflow-y: auto;
   min-height: 64px;
   max-height: 50vh;
