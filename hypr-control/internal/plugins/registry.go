@@ -16,18 +16,20 @@ package plugins
 
 import "fmt"
 
-// NewBuiltins 返回全部内置插件实例。
+// NewBuiltins 返回全部内置插件实例。dataDir 为插件私有数据的存放目录
+//（需要持久化配置的插件使用；传空串则插件不落盘，测试场景用）。
 // 顺序即 `hctrl plugins list` 的显示顺序。
-func NewBuiltins() []Plugin {
+func NewBuiltins(dataDir string) []Plugin {
 	return []Plugin{
 		NewShutdownVolume(),
+		NewSocks5(dataDir),
 	}
 }
 
 // RegisterBuiltins 把全部内置插件注册到 mgr。
 // 内置插件均为编译期代码，重名属于编程错误，遇到即返回错误终止启动。
-func RegisterBuiltins(mgr *Manager) error {
-	for _, p := range NewBuiltins() {
+func RegisterBuiltins(mgr *Manager, dataDir string) error {
+	for _, p := range NewBuiltins(dataDir) {
 		if err := mgr.Register(p); err != nil {
 			return fmt.Errorf("注册内置插件 %s 失败: %w", p.Name(), err)
 		}

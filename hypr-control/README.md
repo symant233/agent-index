@@ -8,6 +8,7 @@
 - **传输安全**：控制通道使用 HTTPS（自签名证书）+ 时间戳/nonce 防重放；http 明文请求自动 301 到 https。
 - **文字与剪贴板（v1.1）**：虚拟键盘点按直接映射主机按键（不走手机输入法）；剪贴板双向同步（拷贝=电脑→手机，粘贴=手机→电脑），中文输入走"复制→粘贴"通路。
 - **窗口切换器（v1.1）**：居中面板列出可切换窗口（类似 Alt+Tab，按 Z 序、标注当前激活项），点击即激活。
+- **SOCKS5 局域网代理（v1.2，插件）**：带用户名/密码鉴权的代理服务器，手机等局域网设备把代理指向本机 IP:端口，即可经本机网络访问内网资源。
 - **REST 控制（P2）**：暂不提供对第三方的公开 REST 通道；控制 API 仅供网页内部使用。
 - **仅支持 Windows**：通过 `user32.dll`（`SendInput` / `SetCursorPos` / `LockWorkStation` / `WM_APPCOMMAND`）实现，零外部依赖、无 CGo。
 
@@ -21,11 +22,12 @@ hypr-control/
 │   ├── win32/            # user32.dll/COM syscall 封装（键盘/鼠标/锁屏/音量/媒体/关机广播监听/剪贴板/窗口）
 │   ├── control/          # Backend 接口 + 真实 Windows 实现（测试可替换 mock）
 │   ├── devices/          # 设备表：JSON 持久化、PIN 配对、token 签发
-│   ├── plugins/          # 插件机制：钩子分发、启停持久化（每插件一个文件）
-│   │   ├── plugins.go            # Plugin 接口 + Manager 钩子分发
+│   ├── plugins/          # 插件机制：钩子分发、生命周期启停、持久化（每插件一个文件）
+│   │   ├── plugins.go            # Plugin 接口 + 可选 Starter/Stopper + Manager
 │   │   ├── store.go              # 启停状态 JSON 持久化
 │   │   ├── registry.go           # 内置插件清单（新增插件在此登记一行）
 │   │   └── plugin_*.go           # 各插件实现（一插件一文件）
+│   ├── socks5/           # SOCKS5 代理服务器（RFC 1928/1929，仅 CONNECT/TCP）
 │   ├── admin/            # 本机管理通道（127.0.0.1 随机端口 + secret）+ CLI 客户端
 │   └── server/           # 局域网控制 HTTP 服务 + go:embed 前端
 │       └── web/          # 前端（纯 HTML/CSS/JS，无构建）
@@ -37,9 +39,14 @@ hypr-control/
 
 ## 插件机制
 
-插件是编译进二进制的钩子单元（无需外部动态库），可在**系统关机/重启事件**
-或**网页电源操作**时被触发。所有插件**初始为禁用状态**，启用状态持久化在
-数据目录 `plugins.json`。
+插件是编译进二进制的单元（无需外部动态库），分两类：
+
+- **钩子型**：实现 `Plugin` 接口，在**系统关机/重启事件**或**网页电源操作**
+  等钩子触发时被调用（如 shutdown-volume）；
+- **生命周期型**：不订阅钩子，实现可选的 `Starter`/`Stopper` 接口，
+  随启用/禁用启停，守护进程启动时自动拉起已启用插件（如 socks5 代理）。
+
+所有插件**初始为禁用状态**，启用状态持久化在数据目录 `plugins.json`。
 
 ### CLI 命令
 
@@ -78,16 +85,51 @@ hctrl plugins enable shutdown-volume
 > 音量目标是编译期常量（`internal/plugins/plugin_shutdownvolume.go` 的 `DefaultTargetPercent`）；
 > 广播应答有约 5 秒系统预算，插件内含 1.5 秒超时保护，不会拖慢关机。
 
+### 内置插件：socks5（局域网代理，经本机访问内网）
+
+**用途**：手机/平板等局域网设备把代理指向本机 IP:端口后，流量经本机出站，
+可直接访问只有本机能到的内网资源（内网站点、内部 API 等）——域名在
+本机解析，天然使用本机 DNS 与内网路由。
+
+**启用（交互式，需鉴权）**：
+
+```powershell
+hctrl plugins enable socks5
+# 用户名: alice
+# 密码:   ****        （输入不回显；已配置过时直接回车=保留原密码）
+# 监听端口 [6666]:   （回车用默认；被占用时自动 +1 顺延，实际端口在结果中打印）
+#
+# SOCKS5 代理已启动：192.168.1.5:6666（用户名 alice）
+```
+
+**设备侧配置**：代理类型选 SOCKS5，服务器填提示打印的 `IP:端口`，
+输入启用时设置的用户名/密码。
+
+**行为细节**：
+- 端口被占用自动顺延（默认 6666 起连试 10 个）；实际端口**粘滞**写回
+  配置（`plugin-socks5.json`），重启后优先复用，避免设备侧代理失效；
+- 守护进程重启/开机自启后自动恢复监听（已启用即拉起）；
+- 仅支持 CONNECT（TCP 隧道），不支持 BIND 与 UDP ASSOCIATE（常规上网够用）；
+- 已配置后重复 `enable` 可改用户名/密码/端口（重新配置并重启监听）；
+  `hctrl plugins disable socks5` 停止监听并保持禁用。
+
+**安全须知**：凭据明文保存在数据目录 `plugin-socks5.json`（权限 0600，
+仅本机当前用户可读）；代理强制用户名/密码鉴权（RFC 1929），无凭据的
+客户端在握手阶段即被拒绝；首次监听可能触发 Windows 防火墙放行询问
+（与 8080 控制端口同一程序，放行一次即可）。
+
 ### 新增一个插件
 
 每个插件一个文件，机制与实现分离。以新增 `my-plugin` 为例：
 
 1. 新建 `internal/plugins/plugin_myplugin.go`，实现 `Plugin` 接口四件套：
    `Name()`（唯一键，发布后不可改）、`Desc()`、`Hooks()`、`OnHook()`；
+   需要随启停运行的长期任务（如监听服务）再实现可选的 `Starter`/`Stopper`
+   （`Start`/`Stop` 须幂等；钩子型插件可返回空 `Hooks()`）；
 2. 在 `internal/plugins/registry.go` 的 `NewBuiltins()` 中追加一行
-   `NewMyPlugin(),`；
+   `NewMyPlugin(...),`；
 3. 运行 `go test ./internal/plugins/ -count=1`——`TestRegisterBuiltins`
-   会自动校验注册、命名唯一、钩子声明与"初始禁用"语义。
+   会自动校验注册、命名唯一、描述与"初始禁用"语义。
 
 无需改动机制代码、CLI 或管理 API：`hctrl plugins list` 自动可见，
 启停状态随名称持久化到 `plugins.json`。
@@ -158,7 +200,7 @@ hctrl kill                        # 优雅停止
 | `hctrl devices deny <ID\|PIN>` | 拒绝待授权设备 |
 | `hctrl devices revoke <ID>` | 吊销已授权设备 |
 | `hctrl plugins list` | 列出全部插件及启停状态（初始均禁用） |
-| `hctrl plugins enable <名称>` | 启用插件（如 `shutdown-volume`） |
+| `hctrl plugins enable <名称>` | 启用插件（如 `shutdown-volume`；`socks5` 为交互式配置） |
 | `hctrl plugins disable <名称>` | 禁用插件 |
 | `hctrl autostart enable\|disable\|status` | 注册/移除/查看开机自启动（HKCU Run） |
 
@@ -192,6 +234,7 @@ hctrl kill                        # 优雅停止
 | `GET /api/admin/plugins` | — | 列出全部插件及启停状态 |
 | `POST /api/admin/plugins/enable` | `{"name":"shutdown-volume"}` | 启用插件并持久化 |
 | `POST /api/admin/plugins/disable` | `{"name":"shutdown-volume"}` | 禁用插件并持久化 |
+| `POST /api/admin/plugins/socks5/setup` | `{"username","password","port"}` | 配置并启用 socks5 代理；返回 `{"port":实际端口,"requested":请求端口}` |
 
 ## 安全说明
 
@@ -204,6 +247,7 @@ hctrl kill                        # 优雅停止
 - **剪贴板**：仅支持文本（`CF_UNICODETEXT`）；手机端浏览器剪贴板 API 在自签名证书下可能不可用，网页自动降级为 textarea 手动中转。
 - **令牌吊销**：`hctrl devices revoke` 后该设备 token 立即失效。
 - **同机用户**：同机其他用户进程可读取 `admin.json`（与"同机用户本就有完全控制权"的风险级别一致）。
+- **socks5 插件凭据**：代理用户名/密码明文保存于数据目录 `plugin-socks5.json`（权限 0600，仅本机当前用户可读）；代理强制鉴权，凭据错误在握手阶段即拒绝。
 - 建议在可信局域网使用；如需公网暴露请另行加固（如 VPN / 反向代理 + TLS）。
 
 ## 已知限制

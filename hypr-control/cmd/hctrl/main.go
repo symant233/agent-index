@@ -22,6 +22,7 @@ const usage = `hctrl —— 局域网主机遥控器（服务端 + 管理 CLI）
   hctrl devices revoke <ID>                   吊销一个已授权设备
   hctrl plugins list                          列出全部插件及状态（初始均为禁用）
   hctrl plugins enable <名称>                 启用插件
+        （socks5 为交互式：依次输入用户名、密码、监听端口）
   hctrl plugins disable <名称>                禁用插件
   hctrl autostart enable|disable|status       注册/移除/查看开机自启动
   hctrl -h | --help                           显示本帮助
@@ -29,12 +30,16 @@ const usage = `hctrl —— 局域网主机遥控器（服务端 + 管理 CLI）
 内置插件:
   shutdown-volume   系统关机/重启事件后、蓝牙音箱断开前，自动把主音量
                     降到 20%，避免音箱以大音量播放断连提示音。
+  socks5            局域网 SOCKS5 代理（用户名/密码鉴权，默认端口 6666）：
+                    手机等设备把代理指向本机 IP:端口，即可经本机访问内网资源。
+                    用 plugins enable socks5 交互式配置并启动。
 
 示例:
   hctrl serve --daemon
   hctrl devices list
   hctrl devices allow 483920
   hctrl plugins enable shutdown-volume
+  hctrl plugins enable socks5
 `
 
 func main() {

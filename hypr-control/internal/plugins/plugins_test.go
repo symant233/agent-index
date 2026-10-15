@@ -256,7 +256,7 @@ func TestLogfNilSafe(t *testing.T) {
 // 新增插件文件后本测试自动覆盖其注册正确性。
 func TestRegisterBuiltins(t *testing.T) {
 	m, _ := newTestManager(t)
-	if err := RegisterBuiltins(m); err != nil {
+	if err := RegisterBuiltins(m, ""); err != nil {
 		t.Fatalf("内置插件注册失败: %v", err)
 	}
 	list := m.List()
@@ -272,10 +272,7 @@ func TestRegisterBuiltins(t *testing.T) {
 			t.Fatalf("插件重名: %s", p.Name)
 		}
 		seen[p.Name] = true
-		// 每个插件必须声明至少一个钩子，且描述非空（CLI 展示用）
-		if len(p.Hooks) == 0 {
-			t.Fatalf("插件 %s 未声明任何钩子", p.Name)
-		}
+		// 钩子可为空（生命周期型插件随启停运行，如 socks5），描述必须非空
 		if p.Desc == "" {
 			t.Fatalf("插件 %s 缺少描述", p.Name)
 		}
@@ -284,8 +281,139 @@ func TestRegisterBuiltins(t *testing.T) {
 			t.Fatalf("插件 %s 初始状态应为禁用", p.Name)
 		}
 	}
-	// shutdown-volume 必须在内置清单中
-	if !seen[NameShutdownVolume] {
-		t.Fatalf("内置插件 %s 未登记", NameShutdownVolume)
+	// 内置清单基线：以下插件必须在内
+	for _, want := range []string{NameShutdownVolume, NameSocks5} {
+		if !seen[want] {
+			t.Fatalf("内置插件 %s 未登记", want)
+		}
+	}
+}
+
+// fakeLifecycle 测试用生命周期插件：记录 Start/Stop 调用次数。
+type fakeLifecycle struct {
+	fakePlugin
+	startErr error
+	mu       sync.Mutex
+	starts   int
+	stops    int
+}
+
+func (f *fakeLifecycle) Start(_ *Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.starts++
+	return f.startErr
+}
+
+func (f *fakeLifecycle) Stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stops++
+}
+
+func (f *fakeLifecycle) counts() (starts, stops int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts, f.stops
+}
+
+// TestLifecycleStartOnEnableStopOnDisable 验证生命周期回调的完整语义：
+// Enable 触发 Start（幂等重复 Enable 不重复 Start）、Disable 触发 Stop、
+// Start 失败不回滚启用状态但错误冒泡。
+func TestLifecycleStartOnEnableStopOnDisable(t *testing.T) {
+	m, path := newTestManager(t)
+	p := &fakeLifecycle{fakePlugin: fakePlugin{name: "lc", hooks: nil}}
+	if err := m.Register(p); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable → Start 一次
+	if err := m.Enable("lc"); err != nil {
+		t.Fatal(err)
+	}
+	if starts, _ := p.counts(); starts != 1 {
+		t.Fatalf("Enable 后 Start 次数 = %d, want 1", starts)
+	}
+	// 重复 Enable：幂等，不重复 Start
+	if err := m.Enable("lc"); err != nil {
+		t.Fatal(err)
+	}
+	if starts, _ := p.counts(); starts != 1 {
+		t.Fatalf("重复 Enable 后 Start 次数 = %d, want 1", starts)
+	}
+	// Disable → Stop 一次；再 Disable 幂等
+	if err := m.Disable("lc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, stops := p.counts(); stops != 1 {
+		t.Fatalf("Disable 后 Stop 次数 = %d, want 1", stops)
+	}
+	if err := m.Disable("lc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, stops := p.counts(); stops != 1 {
+		t.Fatalf("重复 Disable 后 Stop 次数 = %d, want 1", stops)
+	}
+
+	// Start 失败：Enable 返回错误（含启动失败语义），但启用状态已持久化
+	p2 := &fakeLifecycle{fakePlugin: fakePlugin{name: "lc2"}, startErr: errors.New("端口全忙")}
+	m2, _ := NewManager(NewFileStore(path))
+	if err := m2.Register(p2); err != nil {
+		t.Fatal(err)
+	}
+	err := m2.Enable("lc2")
+	if err == nil || !strings.Contains(err.Error(), "启动失败") {
+		t.Fatalf("Start 失败时 Enable 应报启动失败: %v", err)
+	}
+	if !m2.Enabled("lc2") {
+		t.Fatal("Start 失败不应回滚启用状态")
+	}
+}
+
+// TestStartEnabled 验证守护进程启动路径：仅已启用的生命周期插件被拉起，
+// 单个失败只记日志、不影响其他插件。
+func TestStartEnabled(t *testing.T) {
+	m, _ := newTestManager(t)
+	var logs []string
+	m.SetLogf(func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) })
+
+	pa := &fakeLifecycle{fakePlugin: fakePlugin{name: "on"}}
+	pb := &fakeLifecycle{fakePlugin: fakePlugin{name: "off"}} // 保持禁用
+	for _, p := range []*fakeLifecycle{pa, pb} {
+		if err := m.Register(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.Enable("on"); err != nil {
+		t.Fatal(err)
+	}
+	pa.mu.Lock()
+	pa.starts = 0 // 清掉 Enable 时的计数，聚焦 StartEnabled 本身
+	pa.mu.Unlock()
+
+	// StartEnabled：拉起已启用的 "on"，不碰未启用的 "off"
+	m.StartEnabled()
+	if starts, _ := pa.counts(); starts != 1 {
+		t.Fatalf("StartEnabled 应拉起已启用插件: starts=%d", starts)
+	}
+	if starts, _ := pb.counts(); starts != 0 {
+		t.Fatalf("未启用插件不应被 StartEnabled 拉起: starts=%d", starts)
+	}
+
+	// 单个插件 Start 失败只记日志，不影响其他插件继续启动
+	pc := &fakeLifecycle{fakePlugin: fakePlugin{name: "bad"}, startErr: errors.New("起不来")}
+	if err := m.Register(pc); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable("bad"); err == nil {
+		t.Fatal("bad 启用应报错（Start 失败冒泡）")
+	}
+	m.StartEnabled() // bad 仍处于启用状态（失败不回滚），这次失败只记日志
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "bad") || !strings.Contains(joined, "起不来") {
+		t.Fatalf("Start 失败未被记录: %v", logs)
+	}
+	if starts, _ := pa.counts(); starts != 2 {
+		t.Fatalf("bad 失败不应影响其他插件: starts=%d", starts)
 	}
 }

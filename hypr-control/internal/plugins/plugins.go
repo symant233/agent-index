@@ -1,13 +1,19 @@
 // Package plugins 提供 hypr-control 的内置插件机制。
 //
-// 插件是编译进二进制的钩子单元（非外部动态库）：每个插件实现 Plugin
-// 接口，向 Manager 声明自己关心的钩子（如系统关机前、网页电源操作前），
+// 插件是编译进二进制的单元（非外部动态库），分两类：
+//   - 钩子型：实现 Plugin 接口并向 Manager 声明关心的钩子
+//    （如系统关机前、网页电源操作前），Manager 在钩子触发时分发；
+//   - 生命周期型：不订阅钩子，额外实现可选的 Starter/Stopper 接口，
+//     随启用/禁用启停（如 socks5 代理服务）。
+//
 // Manager 负责按名称查询/启用/禁用插件并持久化开关状态。
 //
 // 设计要点：
 //   - 所有插件初始为禁用状态；用户通过 `hctrl plugins enable <名称>` 启用。
 //   - 钩子分发是同步串行的，插件应快速返回（关机路径上有系统超时压力）。
 //   - 钩子返回的错误只记日志，不阻断关机流程。
+//   - 生命周期回调（Start/Stop）在 Manager 锁外执行，Start 的错误会
+//     冒泡给启用命令，Stop 静默（幂等由插件保证）。
 package plugins
 
 import (
@@ -46,16 +52,34 @@ type Plugin interface {
 	// Desc 返回一句话描述（供 CLI 展示）。
 	Desc() string
 	// Hooks 返回插件订阅的钩子列表；Manager 只把已订阅的钩子分发给它。
+	// 生命周期型插件可不订阅任何钩子（返回 nil），随启用/禁用启停。
 	Hooks() []Hook
 	// OnHook 处理一次钩子触发。hook 指明哪个钩子触发（一个插件可订阅多个）。
 	// 返回错误只被记录，不会中断其他插件或后续流程。
 	OnHook(hook Hook, ctx *Context) error
 }
 
+// Starter 是生命周期型插件的可选扩展接口：需要随守护进程启停长期任务
+//（如监听服务）的插件实现它。Manager 在守护进程启动时对已启用插件调用
+// Start，并在每次 Enable 后调用（此时可能首次启动，也可能已在运行）。
+type Starter interface {
+	// Start 启动长期任务。已在运行时必须直接返回（幂等）；
+	// 返回的错误会冒泡给调用方（启用命令的报错 / 启动日志）。
+	// 实现不得回调 Manager（本方法调用期间不持有 Manager 锁）。
+	Start(ctx *Context) error
+}
+
+// Stopper 是与 Starter 配套的可选扩展接口，Disable 时被调用。
+type Stopper interface {
+	// Stop 停止 Start 启动的任务；未在运行时直接返回（幂等）。
+	// 实现不得回调 Manager（本方法调用期间不持有 Manager 锁）。
+	Stop()
+}
+
 // ErrUnknown 表示指定名称的插件不存在。
 var ErrUnknown = fmt.Errorf("未知插件")
 
-// Manager 管理全部插件的注册、启停与钩子分发。
+// Manager 管理全部插件的注册、启停、钩子分发与生命周期回调。
 // 并发安全；状态持久化由注入的 Store 负责。
 type Manager struct {
 	mu      sync.Mutex
@@ -64,6 +88,7 @@ type Manager struct {
 	subs    map[Hook][]Plugin // 钩子 → 订阅插件（按注册顺序）
 	enabled map[string]bool   // 名称 → 是否启用（仅记录显式状态：启用为 true）
 	store   Store
+	logf    func(format string, args ...any) // 生命周期回调的日志输出（可为 nil）
 }
 
 // Store 抽象插件开关状态的持久化（数据目录 JSON 文件）。
@@ -118,6 +143,14 @@ func (m *Manager) Register(p Plugin) error {
 	return nil
 }
 
+// SetLogf 设置生命周期回调（Start/StartEnabled）的日志输出函数。
+// 守护进程装配时调用，注入后日志写入服务日志。
+func (m *Manager) SetLogf(f func(format string, args ...any)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logf = f
+}
+
 // Enabled 报告插件当前是否启用。未注册的插件返回 false。
 func (m *Manager) Enabled(name string) bool {
 	m.mu.Lock()
@@ -125,41 +158,110 @@ func (m *Manager) Enabled(name string) bool {
 	return m.enabled[name]
 }
 
+// Get 按名称返回已注册的插件；未注册返回 nil。
+func (m *Manager) Get(name string) Plugin {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.byName[name]
+}
+
 // Enable 启用插件并持久化。未注册的插件返回 ErrUnknown。
 // 先持久化成功再更新内存：Save 失败时 HTTP 报错且运行态不变，
 // 避免"内存已启用、重启后回退"的 inconsistency。
+// 持久化成功后对实现 Starter 的插件调用 Start（幂等，锁外执行）：
+// 启动失败不回滚启用状态，但错误原样返回给调用方。
 func (m *Manager) Enable(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, ok := m.byName[name]; !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("%w: %s", ErrUnknown, name)
 	}
 	if m.enabled[name] {
-		return nil // 幂等：已启用直接成功
+		m.mu.Unlock()
+		return nil // 幂等：已启用直接成功（已运行的任务不动）
 	}
 	if err := m.storeSaveLocked(map[string]bool{name: true}); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 	m.enabled[name] = true
+	starter, _ := m.byName[name].(Starter)
+	logf := m.logf
+	m.mu.Unlock()
+
+	if starter == nil {
+		return nil
+	}
+	if err := m.safeStart(name, starter, logf); err != nil {
+		return fmt.Errorf("插件 %s 已启用但启动失败: %w", name, err)
+	}
 	return nil
 }
 
 // Disable 禁用插件并持久化。未注册的插件返回 ErrUnknown。
 // 持久化成功后才更新内存，语义同 Enable。
+// 更新内存后对实现 Stopper 的插件调用 Stop（幂等，锁外执行）。
 func (m *Manager) Disable(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, ok := m.byName[name]; !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("%w: %s", ErrUnknown, name)
 	}
 	if !m.enabled[name] {
+		m.mu.Unlock()
 		return nil // 幂等：已禁用直接成功
 	}
 	if err := m.storeSaveLocked(map[string]bool{name: false}); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 	delete(m.enabled, name)
+	stopper, _ := m.byName[name].(Stopper)
+	m.mu.Unlock()
+
+	if stopper != nil {
+		stopper.Stop()
+	}
 	return nil
+}
+
+// StartEnabled 对全部已启用且实现 Starter 的插件调用 Start
+//（守护进程启动时装配完成后调用一次）。单个插件失败只记日志，
+// 不影响其他插件与启动流程。
+func (m *Manager) StartEnabled() {
+	m.mu.Lock()
+	type named struct {
+		name    string
+		starter Starter
+	}
+	var starters []named
+	for _, name := range m.order {
+		if !m.enabled[name] {
+			continue
+		}
+		if st, ok := m.byName[name].(Starter); ok {
+			starters = append(starters, named{name: name, starter: st})
+		}
+	}
+	logf := m.logf
+	m.mu.Unlock()
+
+	for _, st := range starters {
+		if err := m.safeStart(st.name, st.starter, logf); err != nil && logf != nil {
+			logf("插件 %s 启动失败: %v", st.name, err)
+		}
+	}
+}
+
+// safeStart 在锁外调用 Starter.Start，panic 视为插件缺陷但隔离，
+// 避免拖垮启用命令或守护进程启动（语义同 Dispatch）。
+func (m *Manager) safeStart(name string, st Starter, logf func(format string, args ...any)) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("插件 %s 启动中 panic: %v", name, r)
+		}
+	}()
+	return st.Start(&Context{Log: logf})
 }
 
 // storeSaveLocked 计算把 name 置为 want 后的启用快照并持久化（调用方持有锁）。

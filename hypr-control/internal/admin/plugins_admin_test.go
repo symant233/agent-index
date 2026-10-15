@@ -2,6 +2,8 @@ package admin
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -155,6 +157,90 @@ func TestAdminPluginsNil(t *testing.T) {
 	// enable/disable 返回 503
 	if err := cl.EnablePlugin(ctx, "p1"); err == nil {
 		t.Fatal("未装配插件时 enable 应失败")
+	}
+}
+
+// TestAdminSocks5Setup 验证 socks5 setup 端点全链路：
+// 配置生效、代理可连、启用状态落盘、端口顺延透传、非法参数报错。
+func TestAdminSocks5Setup(t *testing.T) {
+	dir := t.TempDir()
+	store, err := devices.Open(filepath.Join(dir, config.DevicesFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := plugins.NewManager(plugins.NewFileStore(filepath.Join(dir, "plugins.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plugins.RegisterBuiltins(mgr, dir); err != nil {
+		t.Fatal(err)
+	}
+	socks5Plugin, ok := mgr.Get(plugins.NameSocks5).(*plugins.Socks5)
+	if !ok {
+		t.Fatal("socks5 插件注册异常")
+	}
+	// 回环监听：测试不触达外部网卡，避免触发 Windows 防火墙放行询问。
+	socks5Plugin.SetListenHostForTest("127.0.0.1")
+
+	srv := NewServer(store, "test-secret")
+	srv.plugins = pluginRegistryAdapter{mgr}
+	srv.socks5 = socks5Plugin
+	if err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if err := writeAdminInfo(filepath.Join(dir, config.AdminFileName), srv.Addr(), "test-secret", 1, config.DefaultPort); err != nil {
+		t.Fatal(err)
+	}
+	cl, err := NewClient(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 找一个空闲端口
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	// Setup 成功：返回实际端口，插件已启用
+	st, err := cl.SetupSocks5(ctx, "alice", "secret", port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Port != port || st.Requested != port {
+		t.Fatalf("SetupSocks5 = %+v, want port=%d", st, port)
+	}
+	if !mgr.Enabled(plugins.NameSocks5) {
+		t.Fatal("Setup 后插件应已启用")
+	}
+	// 代理端口可连
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", st.Port), 2*time.Second)
+	if err != nil {
+		t.Fatalf("setup 后代理未监听: %v", err)
+	}
+	conn.Close()
+
+	// 非法参数：错误经 HTTP 透传
+	if _, err := cl.SetupSocks5(ctx, "", "pw", port); err == nil {
+		t.Fatal("空用户名应报错")
+	}
+	if _, err := cl.SetupSocks5(ctx, "u", "pw", 70000); err == nil {
+		t.Fatal("非法端口应报错")
+	}
+
+	// Disable：走通用路径，代理停止（端口不可连）
+	if err := cl.DisablePlugin(ctx, plugins.NameSocks5); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", st.Port), 500*time.Millisecond); err == nil {
+		conn.Close()
+		t.Fatal("禁用后代理端口不应可连")
 	}
 }
 

@@ -25,6 +25,7 @@ type Server struct {
 	secret  string
 	started time.Time
 	plugins PluginRegistry
+	socks5  Socks5Setup
 
 	// 由 RunServer 注入
 	port       int      // 控制服务端口（status 展示用）
@@ -42,6 +43,12 @@ type PluginRegistry interface {
 	List() []PluginInfo
 	Enable(name string) error
 	Disable(name string) error
+}
+
+// Socks5Setup 是 socks5 插件的配置入口（由 *plugins.Socks5 实现），
+// 供交互式启用流程调用：校验并保存配置、重启监听、返回实际端口。
+type Socks5Setup interface {
+	Setup(username, password string, port int) (actualPort int, err error)
 }
 
 // PluginInfo 与 plugins.Info 字段一致（JSON 直接透传）。
@@ -131,6 +138,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handlePluginEnable(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/admin/plugins/disable":
 		s.handlePluginDisable(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/admin/plugins/socks5/setup":
+		s.handleSocks5Setup(w, r)
 	default:
 		writeErr(w, http.StatusNotFound, "未知管理接口")
 	}
@@ -252,6 +261,36 @@ func (s *Server) handlePluginSet(w http.ResponseWriter, r *http.Request, enable 
 	writeJSON(w, map[string]string{"ok": result, "name": body.Name})
 }
 
+// handleSocks5Setup 配置并启动 socks5 代理插件
+//（CLI 交互式启用流程的服务端，body: {"username","password","port"}）。
+// 成功即配置生效、代理已监听，并持久化启用状态；响应携带实际绑定端口
+//（请求端口被占用时插件已自动顺延，requested 供 CLI 提示）。
+func (s *Server) handleSocks5Setup(w http.ResponseWriter, r *http.Request) {
+	if s.plugins == nil || s.socks5 == nil {
+		writeErr(w, http.StatusServiceUnavailable, "socks5 插件不可用")
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Port     int    `json:"port"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	port, err := s.socks5.Setup(body.Username, body.Password, body.Port)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// 交互式启用 = 配置 + 启用一步完成；插件已在运行，Enable 只落状态。
+	if err := s.plugins.Enable(plugins.NameSocks5); err != nil {
+		writeErr(w, http.StatusInternalServerError, "代理已启动但写入启用状态失败: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]int{"port": port, "requested": body.Port})
+}
+
 // handleRestart 响应成功后以相同参数拉起新进程，再退出当前进程。
 func (s *Server) handleRestart(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"ok": "restarting"})
@@ -327,9 +366,12 @@ func RunServer(cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("插件状态加载失败: %w", err)
 	}
-	if err := plugins.RegisterBuiltins(mgr); err != nil {
+	if err := plugins.RegisterBuiltins(mgr, cfg.DataDir); err != nil {
 		return fmt.Errorf("内置插件注册失败: %w", err)
 	}
+	// 生命周期型插件（如 socks5 代理）：守护进程启动即拉起已启用插件。
+	mgr.SetLogf(func(f string, a ...any) { log.Printf("[plugin] "+f, a...) })
+	mgr.StartEnabled()
 
 	// 系统关机/重启广播监听：WM_QUERYENDSESSION 到达即分发 shutdown 钩子。
 	// 插件全部禁用时回调为空转（不执行任何操作），无额外开销。
@@ -347,6 +389,10 @@ func RunServer(cfg config.Config) error {
 	adminSrv.startArgs = os.Args[1:]
 	adminSrv.onShutdown = func() { os.Exit(0) }
 	adminSrv.plugins = pluginRegistryAdapter{mgr}
+	// socks5 交互式启用端点需要插件实例；未注册/类型不符时端点返回 503。
+	if sp, ok := mgr.Get(plugins.NameSocks5).(Socks5Setup); ok {
+		adminSrv.socks5 = sp
+	}
 
 	if err := adminSrv.Listen(); err != nil {
 		return err

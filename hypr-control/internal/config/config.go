@@ -55,5 +55,10 @@ func (c Config) AdminFile() string { return filepath.Join(c.DataDir, AdminFileNa
 // PluginsFile 返回插件启用状态文件路径。
 func (c Config) PluginsFile() string { return filepath.Join(c.DataDir, PluginsFileName) }
 
+// Socks5PluginFile 返回 socks5 插件配置文件路径。
+func (c Config) Socks5PluginFile() string {
+	return filepath.Join(c.DataDir, Socks5PluginFileName)
+}
+
 // EnsureDataDir 确保数据目录存在（权限 0700）。
 func (c Config) EnsureDataDir() error { return os.MkdirAll(c.DataDir, 0o700) }
